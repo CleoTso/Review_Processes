@@ -28,6 +28,11 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.airtable_vendor_view, "viwVD8IFpH6fXUPvh")
         self.assertEqual(config.history_days, 730)
 
+    def test_canonical_vendor_base_is_used_when_base_is_omitted(self):
+        with patch.dict(os.environ, {"AIRTABLE_API_KEY": "runtime-value"}, clear=True):
+            config = Config.from_env()
+        self.assertEqual(config.airtable_base_id, "app25k6lMy8bzOhq5")
+
     def test_legacy_airtable_token_remains_accepted(self):
         with patch.dict(
             os.environ,

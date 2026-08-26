@@ -61,10 +61,9 @@ exports, or `.review-state/`.
    ```
 
 2. Copy `.env.example` to `.env` and set the Airtable values. The default live
-   source is the `All Vendors` table / `Every Vendor Ever` view in the
-   `Catering - Schedule` base. IDs are used so a renamed Airtable label cannot
-   silently redirect the audit.
-   `AIRTABLE_TOKEN` is accepted as a backward-compatible alias, but
+   source is the `All Vendors` table / `Every Vendor Ever` view in the `Vendors`
+   base. IDs are used so a renamed Airtable label cannot silently redirect the
+   audit. `AIRTABLE_TOKEN` is accepted as a backward-compatible alias, but
    `AIRTABLE_API_KEY` is the preferred name.
 
 3. Create a Google Desktop OAuth client with Gmail read-only scope. Save its
@@ -106,7 +105,7 @@ field changes such as the existing electricity provider transition.
 
 ```dotenv
 AIRTABLE_API_KEY=...
-AIRTABLE_BASE_ID=appbi8e94akhiP3ZS
+AIRTABLE_BASE_ID=app25k6lMy8bzOhq5
 AIRTABLE_VENDOR_TABLE=tblmysPS8GSncnWSa
 AIRTABLE_VENDOR_VIEW=viwVD8IFpH6fXUPvh
 GOOGLE_TOKEN_FILE=google-token.json

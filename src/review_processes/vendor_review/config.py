@@ -33,8 +33,6 @@ class Config:
         missing = []
         if not (os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_TOKEN")):
             missing.append("AIRTABLE_API_KEY")
-        if not os.getenv("AIRTABLE_BASE_ID"):
-            missing.append("AIRTABLE_BASE_ID")
         if missing:
             raise SystemExit(f"Missing environment variables: {', '.join(missing)}")
         return cls(
