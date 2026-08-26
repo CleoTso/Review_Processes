@@ -136,11 +136,16 @@ The report is saved at `.review-state/audit-report.json` unless
 
 ## Completion reporting
 
-The existing `reporting.publish_completion` helper enforces Notion-before-Slack
-ordering for a completed run. Any production scheduler or notification wiring
-must call it only after the complete report has been saved and must preserve the
-read-only audit boundary. This repository does not claim a GitHub Actions job or
-scheduler unless one is separately deployed and verified.
+GitHub Actions runs `.github/workflows/monthly-vendor-audit.yml` on the first of
+each month at 8:00 AM America/Chicago, and on demand from `main`. The job is
+read-only against Airtable, uses a Gmail read-only token, and DMs the Slack
+recipient stored in `SLACK_RECIPIENT_USER_ID`. Runtime secrets stay in GitHub
+encrypted secrets (`AIRTABLE_API_KEY`, `GOOGLE_TOKEN_JSON`, `SLACK_BOT_TOKEN`)
+and are shredded at the end of the run.
+
+The existing `reporting.publish_completion` helper can still write Notion before
+Slack for a completed local run. The scheduled GitHub job currently delivers the
+verified Slack summary only; it does not mutate Airtable or send Gmail.
 
 ## Development
 

@@ -22,6 +22,8 @@ class WorkflowDefinitionTests(unittest.TestCase):
         ):
             self.assertIn(required, workflow)
         self.assertNotIn("upload-artifact", workflow)
+        self.assertNotIn("runner.temp", workflow)
+        self.assertIn("$RUNNER_TEMP", workflow)
 
 
 if __name__ == "__main__":

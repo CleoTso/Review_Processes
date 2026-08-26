@@ -27,15 +27,13 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       AIRTABLE_BASE_ID: app25k6lMy8bzOhq5
       AIRTABLE_VENDOR_TABLE: tblmysPS8GSncnWSa
       AIRTABLE_VENDOR_VIEW: viwVD8IFpH6fXUPvh
-      GOOGLE_TOKEN_FILE: ${{ runner.temp }}/vendor-google-token.json
-      REVIEW_STATE_DIR: ${{ runner.temp }}/vendor-review-state
-      LOOKBACK_DAYS: ${{ inputs.lookback_days || '180' }}
-      HISTORY_DAYS: ${{ inputs.history_days || '730' }}
+      LOOKBACK_DAYS: ${{ github.event.inputs.lookback_days || '180' }}
+      HISTORY_DAYS: ${{ github.event.inputs.history_days || '730' }}
       RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
 
     steps:
@@ -65,8 +63,8 @@ jobs:
           fi
           run="true"
           if [[ "$GITHUB_EVENT_NAME" == "schedule" ]]; then
-            central_hour="$(TZ=America/Chicago date +%-H)"
-            if [[ "$central_hour" != "8" ]]; then
+            central_hour="$(TZ=America/Chicago date +%H)"
+            if [[ "$central_hour" != "08" ]]; then
               echo "Central time is ${central_hour}:00; this is the other DST candidate, so skipping."
               run="false"
             fi
@@ -111,8 +109,8 @@ jobs:
         run: |
           set -euo pipefail
           umask 077
-          printf '%s' "$GOOGLE_TOKEN_JSON" > "$GOOGLE_TOKEN_FILE"
-          python - "$GOOGLE_TOKEN_FILE" <<'PY'
+          printf '%s' "$GOOGLE_TOKEN_JSON" > "$RUNNER_TEMP/vendor-google-token.json"
+          python - "$RUNNER_TEMP/vendor-google-token.json" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -135,6 +133,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export GOOGLE_TOKEN_FILE="$RUNNER_TEMP/vendor-google-token.json"
+          export REVIEW_STATE_DIR="$RUNNER_TEMP/vendor-review-state"
           vendor-review audit \
             --lookback-days "$LOOKBACK_DAYS" \
             --history-days "$HISTORY_DAYS" \
@@ -167,4 +167,4 @@ jobs:
       - name: Remove runtime credentials and report data
         if: always()
         shell: bash
-        run: rm -f "$GOOGLE_TOKEN_FILE" "$RUNNER_TEMP/vendor-audit-report.json"
+        run: rm -f "$RUNNER_TEMP/vendor-google-token.json" "$RUNNER_TEMP/vendor-audit-report.json"
