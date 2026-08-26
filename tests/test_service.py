@@ -49,7 +49,7 @@ class BatchGmailFake(GmailFake):
         self.batch_calls = []
         self.attachment_calls = []
 
-    def messages(self, message_ids, *, format="metadata"):
+    def messages(self, message_ids, *, format="full"):
         self.batch_calls.append(list(message_ids))
         self.assert_format = format
         return [self.mail[message_id] for message_id in message_ids]
@@ -57,6 +57,25 @@ class BatchGmailFake(GmailFake):
     def attachment(self, message_id, attachment_id):
         self.attachment_calls.append((message_id, attachment_id))
         return b"should-not-download"
+
+
+class ForbiddenThenReadableGmailFake(GmailFake):
+    def __init__(self):
+        super().__init__()
+        self.requested_format = None
+
+    def search(self, query, max_results=500):
+        self.queries.append(query)
+        return ["blocked", "m1"]
+
+    def messages(self, message_ids, *, format="full"):
+        self.requested_format = format
+        loaded = []
+        for message_id in message_ids:
+            if message_id == "blocked":
+                continue
+            loaded.append(self.mail[message_id])
+        return loaded
 
 
 class ServiceTests(unittest.TestCase):
@@ -106,6 +125,26 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(gmail.batch_calls, [["m1"]])
             self.assertEqual(gmail.attachment_calls, [])
             self.assertEqual(report.messages_scanned, 1)
+
+    def test_audit_keeps_readable_messages_when_one_gmail_lookup_is_forbidden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gmail = ForbiddenThenReadableGmailFake()
+            service = VendorReviewService(
+                AirtableFake([{
+                    "id": "v1",
+                    "fields": {"Vendor": "ACME Services", "Contact Email": "vendor@example.com"},
+                }]),
+                gmail,
+                ProposalStore(Path(directory)),
+                AuditReportStore(Path(directory)),
+                "viwVD8IFpH6fXUPvh",
+            )
+
+            report = service.audit(lookback_days=90, history_days=180)
+
+            self.assertEqual(gmail.requested_format, "full")
+            self.assertEqual(report.messages_scanned, 1)
+            self.assertEqual(report.vendors[0].findings[Category.MAINTENANCE].status, FindingStatus.DOCUMENTED_RECENT)
 
 
 if __name__ == "__main__":

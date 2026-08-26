@@ -56,8 +56,8 @@ class GmailClient:
             params["pageToken"] = token
         return ids[:max_results]
 
-    def messages(self, message_ids: list[str], *, format: str = "metadata") -> list[dict[str, Any]]:
-        """Fetch many Gmail messages, preserving input order."""
+    def messages(self, message_ids: list[str], *, format: str = "full") -> list[dict[str, Any]]:
+        """Fetch many Gmail messages, skipping ones that cannot be read."""
         if not message_ids:
             return []
         results: dict[str, dict[str, Any]] = {}
@@ -66,13 +66,18 @@ class GmailClient:
             results.update(self._batch_get(chunk, format=format))
         missing = [message_id for message_id in message_ids if message_id not in results]
         for message_id in missing:
-            results[message_id] = self.message(message_id, format=format)
-        return [results[message_id] for message_id in message_ids]
+            try:
+                results[message_id] = self.message(message_id, format=format)
+            except Exception:
+                continue
+        return [results[message_id] for message_id in message_ids if message_id in results]
 
     def message(self, message_id: str, *, format: str = "full") -> dict[str, Any]:
         params: dict[str, Any] = {"format": format}
         if format == "metadata":
             params["metadataHeaders"] = _METADATA_HEADERS
+        if format == "full":
+            params = {"format": "full"}
         response = self.session.get(
             f"{self.API}/messages/{message_id}", params=params, timeout=30
         )

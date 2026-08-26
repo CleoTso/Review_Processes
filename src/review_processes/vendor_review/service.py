@@ -57,9 +57,14 @@ class VendorReviewService:
                     seen.add(message_id)
                     message_ids.append(message_id)
         if hasattr(self.gmail, "messages"):
-            loaded = self.gmail.messages(message_ids, format="metadata")
+            loaded = self.gmail.messages(message_ids, format="full")
         else:
-            loaded = [self.gmail.message(message_id) for message_id in message_ids]
+            loaded = []
+            for message_id in message_ids:
+                try:
+                    loaded.append(self.gmail.message(message_id))
+                except Exception:
+                    continue
         return [(message, {}) for message in loaded]
 
     def scan(self, lookback_days: int, required_store: str | None = None) -> list[Proposal]:
