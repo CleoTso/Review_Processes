@@ -21,7 +21,7 @@ class AirtableFake:
 class GmailFake:
     def __init__(self):
         self.queries = []
-        self.messages = {
+        self.mail = {
             "m1": {
                 "id": "m1",
                 "internalDate": "1787227200000",
@@ -37,10 +37,26 @@ class GmailFake:
         return ["m1"]
 
     def message(self, message_id):
-        return self.messages[message_id]
+        return self.mail[message_id]
 
     def attachment(self, message_id, attachment_id):
         return b""
+
+
+class BatchGmailFake(GmailFake):
+    def __init__(self):
+        super().__init__()
+        self.batch_calls = []
+        self.attachment_calls = []
+
+    def messages(self, message_ids, *, format="metadata"):
+        self.batch_calls.append(list(message_ids))
+        self.assert_format = format
+        return [self.mail[message_id] for message_id in message_ids]
+
+    def attachment(self, message_id, attachment_id):
+        self.attachment_calls.append((message_id, attachment_id))
+        return b"should-not-download"
 
 
 class ServiceTests(unittest.TestCase):
@@ -70,6 +86,26 @@ class ServiceTests(unittest.TestCase):
                 self.assertIn(term, query)
             self.assertEqual(report.vendors[0].findings[Category.MAINTENANCE].status, FindingStatus.DOCUMENTED_RECENT)
             self.assertEqual(audit_store.load().vendors[0].name, "ACME Services")
+
+    def test_audit_uses_batched_metadata_and_skips_attachment_downloads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gmail = BatchGmailFake()
+            service = VendorReviewService(
+                AirtableFake([{
+                    "id": "v1",
+                    "fields": {"Vendor": "ACME Services", "Contact Email": "vendor@example.com"},
+                }]),
+                gmail,
+                ProposalStore(Path(directory)),
+                AuditReportStore(Path(directory)),
+                "viwVD8IFpH6fXUPvh",
+            )
+
+            report = service.audit(lookback_days=90, history_days=180)
+
+            self.assertEqual(gmail.batch_calls, [["m1"]])
+            self.assertEqual(gmail.attachment_calls, [])
+            self.assertEqual(report.messages_scanned, 1)
 
 
 if __name__ == "__main__":

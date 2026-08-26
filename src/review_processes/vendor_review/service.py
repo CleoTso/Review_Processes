@@ -56,16 +56,11 @@ class VendorReviewService:
                 if message_id not in seen:
                     seen.add(message_id)
                     message_ids.append(message_id)
-        messages = []
-        for message_id in message_ids:
-            message = self.gmail.message(message_id)
-            blobs: dict[str, bytes] = {}
-            for item in attachments(message):
-                filename = item["filename"]
-                if filename.lower().endswith((".pdf", ".doc", ".docx")):
-                    blobs[filename] = self.gmail.attachment(message_id, item["id"])
-            messages.append((message, blobs))
-        return messages
+        if hasattr(self.gmail, "messages"):
+            loaded = self.gmail.messages(message_ids, format="metadata")
+        else:
+            loaded = [self.gmail.message(message_id) for message_id in message_ids]
+        return [(message, {}) for message in loaded]
 
     def scan(self, lookback_days: int, required_store: str | None = None) -> list[Proposal]:
         vendors = self.airtable.records(view=self.airtable_view)

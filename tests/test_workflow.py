@@ -19,6 +19,7 @@ class WorkflowDefinitionTests(unittest.TestCase):
             "SLACK_BOT_TOKEN",
             "SLACK_RECIPIENT_USER_ID",
             "if: always()",
+            "steps.report.outcome != 'success'",
         ):
             self.assertIn(required, workflow)
         self.assertNotIn("upload-artifact", workflow)

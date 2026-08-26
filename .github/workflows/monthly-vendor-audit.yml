@@ -27,7 +27,7 @@ concurrency:
 jobs:
   audit:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 20
     env:
       AIRTABLE_BASE_ID: app25k6lMy8bzOhq5
       AIRTABLE_VENDOR_TABLE: tblmysPS8GSncnWSa
@@ -154,7 +154,7 @@ jobs:
             --run-url "$RUN_URL"
 
       - name: Alert Slack if the audit did not complete
-        if: failure() && steps.guard.outputs.run == 'true' && steps.report.outcome != 'failure'
+        if: always() && steps.guard.outputs.run == 'true' && steps.report.outcome != 'success'
         env:
           SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
           SLACK_RECIPIENT_USER_ID: ${{ vars.SLACK_RECIPIENT_USER_ID }}
