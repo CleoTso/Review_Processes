@@ -21,9 +21,11 @@ class AirtableClient:
     def table_url(self) -> str:
         return f"{self.API}/{self.base_id}/{quote(self.table, safe='')}"
 
-    def records(self) -> list[dict[str, Any]]:
+    def records(self, view: str | None = None) -> list[dict[str, Any]]:
         output: list[dict[str, Any]] = []
         params: dict[str, Any] = {"pageSize": 100}
+        if view:
+            params["view"] = view
         while True:
             response = self.session.get(self.table_url, params=params, timeout=30)
             response.raise_for_status()

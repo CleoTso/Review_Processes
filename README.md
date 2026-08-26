@@ -1,66 +1,158 @@
 # Review Processes
 
-Approval-gated automations for operational reviews. The first workflow compares the Airtable vendor directory with recent Gmail invoices, bills, contracts, and agreements.
+Approval-gated automations for operational reviews. The Vendor Review workflow
+compares the live Airtable vendor directory with Gmail contract and service
+communications and produces a complete evidence matrix.
+
+## What the audit reviews
+
+For **every record** in the Airtable `All Vendors` table using the
+`Every Vendor Ever` view, the audit
+reports separate findings for:
+
+1. **Contract / terms** — executed agreements, amendments, renewals, rate
+   changes, and terms-of-service documents.
+2. **Insurance / COI** — certificates of insurance, policy/declarations pages,
+   limits, effective dates, additional-insured language, and workers'
+   compensation references.
+3. **Maintenance / service** — maintenance agreements, preventive-maintenance
+   plans, recurring service, HVAC, refrigeration, plumbing, pest, hood/grease,
+   filter, repair, and related service evidence.
+
+The matrix also retains credible Gmail vendors that are not yet in Airtable.
+Off-boarded records stay visible but are excluded from the active count.
+
+### Evidence statuses
+
+- `documented_recent` — matching evidence in the configured lookback window;
+- `documented_older` — evidence exists in the history window but is older than
+  the lookback window;
+- `possible_lead` — a solicitation, quote, or inquiry mentions the category but
+  does not prove an executed agreement, issued policy, or active service;
+- `missing` — no matching Gmail evidence was found in the history window.
+
+A missing insurance document is a finding for human follow-up, not permission
+to assume the vendor is uninsured. A solicitation is never treated as an
+agreement or coverage proof.
 
 ## Safety model
 
-`scan` is read-only. It creates a local proposal queue with evidence, confidence, the exact before/after values, attachments to save, and any questions. Airtable is only changed by `approve`. `reject` records a local rejection so the proposal is ignored on future scans. Before applying an approval, the tool checks that the Airtable values have not changed since the scan.
+`audit` and `scan` are read-only against Airtable. They create local, atomic
+JSON state only. Airtable is changed only by `approve`, which applies the
+exact displayed changes after checking for record drift.
 
-No Gmail messages, contracts, credentials, or proposal state are committed; `.review-state/` and OAuth files are ignored.
+The audit stores evidence metadata (message ID, sender, subject, date, Gmail
+link, attachment name, and short facts), not the full email body. Gmail is read
+with a read-only OAuth scope. Relevant document attachments may be downloaded
+for classification; no email is sent and no source attachment is uploaded by
+`audit`.
+
+Credentials are runtime inputs only. Never commit `.env`, OAuth files, email
+exports, or `.review-state/`.
 
 ## Setup
 
-1. Use Python 3.11+ and run `python -m venv .venv && source .venv/bin/activate`.
-2. Install with `pip install -e .`.
-3. Copy `.env.example` to `.env` and set the Airtable base/table values.
-4. Create a Google Desktop OAuth client with Gmail read-only scope. Save its secret as `google-client-secret.json`, then run `vendor-review auth` once. For server deployment, provision `google-token.json` through your secrets manager.
+1. Use Python 3.11+ and run:
 
-The Airtable token needs record read/write access and attachment-upload access for the configured base. Never commit either credential file.
+   ```bash
+   python -m venv .venv
+   source .venv/bin/activate
+   pip install -e .
+   ```
+
+2. Copy `.env.example` to `.env` and set the Airtable values. The default live
+   source is the `All Vendors` table / `Every Vendor Ever` view in the
+   `Catering - Schedule` base. IDs are used so a renamed Airtable label cannot
+   silently redirect the audit.
+   `AIRTABLE_TOKEN` is accepted as a backward-compatible alias, but
+   `AIRTABLE_API_KEY` is the preferred name.
+
+3. Create a Google Desktop OAuth client with Gmail read-only scope. Save its
+   client secret as `google-client-secret.json`, then run this once:
+
+   ```bash
+   vendor-review auth
+   ```
+
+   For server deployment, provision the resulting token through the runtime
+   secret mechanism. Do not commit either OAuth file.
 
 ## Use
 
+Run a complete matrix review:
+
 ```bash
-vendor-review scan
-vendor-review list
+vendor-review audit --json
+vendor-review audit --lookback-days 180 --history-days 730
+```
+
+Run the existing approval-proposal scan separately:
+
+```bash
+vendor-review scan --json
+vendor-review list --status pending
 vendor-review show VR-20260826-ABC123
+vendor-review answer VR-20260826-ABC123 portal_url https://portal.example.com
+vendor-review approve VR-20260826-ABC123 --dry-run
 vendor-review approve VR-20260826-ABC123
 vendor-review reject VR-20260826-ABC123 --reason "Not a vendor change"
 ```
 
-`approve` applies only the displayed fields and uploads only the displayed contract/agreement attachments. If a proposal has unresolved required questions, pass their answers first:
+`audit` reviews all records and does not create Airtable update proposals for
+missing evidence. `scan` remains the narrower workflow for evidence-backed
+field changes such as the existing electricity provider transition.
 
-```bash
-vendor-review answer VR-20260826-ABC123 portal_url https://portal.example.com
-vendor-review approve VR-20260826-ABC123
+## Configuration
+
+```dotenv
+AIRTABLE_API_KEY=...
+AIRTABLE_BASE_ID=appbi8e94akhiP3ZS
+AIRTABLE_VENDOR_TABLE=tblmysPS8GSncnWSa
+AIRTABLE_VENDOR_VIEW=viwVD8IFpH6fXUPvh
+GOOGLE_TOKEN_FILE=google-token.json
+REVIEW_STATE_DIR=.review-state
+REVIEW_LOOKBACK_DAYS=180
+REVIEW_HISTORY_DAYS=730
 ```
 
-Useful options:
+The Gmail query uses the history window and includes contract, terms, insurance,
+COI, liability, maintenance, HVAC, refrigeration, plumbing, pest, hood, grease,
+repair, and service language. The classifier uses document/phrase signals and
+sender/domain/name matching, including forwarded-message headers such as
+`X-Original-Sender` and `Reply-To`.
+
+## Audit output
+
+The JSON report includes:
+
+- directory and active-directory counts;
+- Gmail messages scanned and matched-vendor count;
+- one row per Airtable vendor with all three category findings;
+- evidence links and attachment names;
+- uncatalogued Gmail candidates;
+- a missing-finding count for active vendors.
+
+The report is saved at `.review-state/audit-report.json` unless
+`REVIEW_STATE_DIR` is changed.
+
+## Completion reporting
+
+The existing `reporting.publish_completion` helper enforces Notion-before-Slack
+ordering for a completed run. Any production scheduler or notification wiring
+must call it only after the complete report has been saved and must preserve the
+read-only audit boundary. This repository does not claim a GitHub Actions job or
+scheduler unless one is separately deployed and verified.
+
+## Development
+
+Run the complete local test suite:
 
 ```bash
-vendor-review scan --lookback-days 90 --required-store RoundRock
-vendor-review list --status pending
-vendor-review approve ID --dry-run
+python -m unittest discover -s tests -v
 ```
 
-## Automation
-
-Run `vendor-review scan --json` on a schedule and send the resulting pending proposals to the desired notification channel. Keep the approval command behind an authenticated human action. The CLI exits non-zero if a required store has no evidence candidate, preventing a silent miss.
-
-Review automations default to a monthly recurrence on the calendar day they are created unless a review specifies another cadence. The Vendor Review was created on August 26, 2026 and runs on the 26th of each month. Scheduled scans remain read-only; approvals are separate human actions.
-
-### Completion reporting
-
-After every completed Vendor Audit, the automation must complete these actions in order:
-
-1. Prepend a dated audit entry to the [Vendor Audit Automation Notion page](https://app.notion.com/p/3c871e784c17805e8a8ffe93cb4af806). The newest audit must remain at the top.
-2. After the Notion update succeeds, send Cleo a Slack DM confirming completion and linking to that page. A self-DM is acceptable.
-
-The dated note includes sources reviewed, proposal IDs and affected vendors/stores, confidence, fields proposed for change, unanswered questions, and confirmation that the read-only audit did not modify Airtable. `reporting.publish_completion` enforces Notion-before-Slack ordering and does not send a success DM when the Notion write fails.
-
-## Scope and evidence rules
-
-- Invoices establish that a vendor/account is active, but do not by themselves prove a legal-name or portal change.
-- Executed agreements can propose provider, term, price, notice contact, service address, and contract attachment updates.
-- Sender addresses are evidence only when the sender domain belongs to the vendor or the document labels the address as a notice/support contact.
-- A supplier change preserves existing attachments and appends the new agreement.
-- Unknown portal URLs, account numbers, or switch dates become questions; they are never guessed.
+The tests cover category classification, ordinary-invoice exclusion, insurance
+and maintenance solicitation handling, missing evidence, recent-vs-old
+history, forwarded sender matching, uncatalogued vendors, off-boarded vendors,
+atomic report persistence, the existing electricity detector, and approval
+state preservation.

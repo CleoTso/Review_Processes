@@ -10,10 +10,12 @@ def decode(value: str) -> bytes:
 
 
 def headers(message: dict[str, Any]) -> dict[str, str]:
-    return {
-        h["name"].lower(): h["value"]
-        for h in message.get("payload", {}).get("headers", [])
-    }
+    output: dict[str, str] = {}
+    for item in message.get("payload", {}).get("headers", []) or []:
+        if not isinstance(item, dict) or not item.get("name") or item.get("value") is None:
+            continue
+        output[str(item["name"]).lower()] = str(item["value"])
+    return output
 
 
 def received_at(message: dict[str, Any]) -> str:

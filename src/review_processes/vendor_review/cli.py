@@ -6,10 +6,11 @@ import os
 from pathlib import Path
 
 from .airtable import AirtableClient
+from .audit import AuditReport, Category
 from .config import Config, load_dotenv
 from .gmail import GmailClient, authorize
 from .service import VendorReviewService
-from .store import ProposalStore
+from .store import AuditReportStore, ProposalStore
 
 
 def parser() -> argparse.ArgumentParser:
@@ -18,7 +19,11 @@ def parser() -> argparse.ArgumentParser:
     auth = commands.add_parser("auth", help="Create a Gmail read-only OAuth token")
     auth.add_argument("--client-secret", type=Path, default=Path("google-client-secret.json"))
     auth.add_argument("--token-file", type=Path, default=Path("google-token.json"))
-    scan = commands.add_parser("scan", help="Read Gmail/Airtable and create proposals")
+    audit = commands.add_parser("audit", help="Review every vendor against Gmail contract evidence")
+    audit.add_argument("--lookback-days", type=int)
+    audit.add_argument("--history-days", type=int)
+    audit.add_argument("--json", action="store_true")
+    scan = commands.add_parser("scan", help="Read Gmail/Airtable and create update proposals")
     scan.add_argument("--lookback-days", type=int)
     scan.add_argument("--required-store")
     scan.add_argument("--json", action="store_true")
@@ -42,9 +47,10 @@ def parser() -> argparse.ArgumentParser:
 
 def dependencies(config: Config):
     store = ProposalStore(config.state_dir)
+    audit_store = AuditReportStore(config.state_dir)
     airtable = AirtableClient(config.airtable_token, config.airtable_base_id, config.airtable_vendor_table)
     gmail = GmailClient(config.google_token_file)
-    return store, VendorReviewService(airtable, gmail, store)
+    return store, VendorReviewService(airtable, gmail, store, audit_store, config.airtable_vendor_view)
 
 
 def main() -> None:
@@ -78,7 +84,10 @@ def main() -> None:
         return
     config = Config.from_env()
     store, service = dependencies(config)
-    if args.command == "scan":
+    if args.command == "audit":
+        report = service.audit(args.lookback_days or config.lookback_days, args.history_days or config.history_days)
+        print(json.dumps(report.to_dict(), indent=2) if args.json else _audit_table(report))
+    elif args.command == "scan":
         proposals = service.scan(args.lookback_days or config.lookback_days, args.required_store)
         print(json.dumps([p.to_dict() for p in proposals], indent=2) if args.json else _table(proposals))
     elif args.command == "approve":
@@ -98,6 +107,28 @@ def _table(proposals) -> str:
             f"{p.id} | {p.confidence:.0%} | {p.store or '-'} | {p.vendor_before} | "
             f"{len(p.changes)} | {len([q for q in p.questions if not q.answer])}"
         )
+    return "\n".join(lines)
+
+
+def _audit_table(report: AuditReport) -> str:
+    lines = [
+        f"Vendor audit generated {report.generated_at}",
+        f"Directory: {report.directory_count} ({report.active_directory_count} active); "
+        f"Gmail messages scanned: {report.messages_scanned}; matched vendors: {report.matched_vendor_count}",
+        "Vendor | Active | Contract/terms | Insurance/COI | Maintenance/service",
+        "---|---:|---|---|---",
+    ]
+    for vendor in report.vendors:
+        findings = vendor.findings
+        lines.append(
+            f"{vendor.name} | {'yes' if vendor.active else 'no'} | "
+            f"{findings[Category.CONTRACT_TERMS].status.value} | "
+            f"{findings[Category.INSURANCE].status.value} | "
+            f"{findings[Category.MAINTENANCE].status.value}"
+        )
+    if report.uncatalogued:
+        lines.append("")
+        lines.append("Uncatalogued Gmail candidates: " + ", ".join(item.name for item in report.uncatalogued))
     return "\n".join(lines)
 
 

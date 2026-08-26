@@ -1,0 +1,76 @@
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+from review_processes.vendor_review.audit import Category, FindingStatus
+from review_processes.vendor_review.service import VendorReviewService
+from review_processes.vendor_review.store import AuditReportStore, ProposalStore
+
+
+class AirtableFake:
+    def __init__(self, records):
+        self._records = records
+        self.requested_view = None
+
+    def records(self, view=None):
+        self.requested_view = view
+        return self._records
+
+
+class GmailFake:
+    def __init__(self):
+        self.queries = []
+        self.messages = {
+            "m1": {
+                "id": "m1",
+                "internalDate": "1787227200000",
+                "payload": {"headers": [
+                    {"name": "Subject", "value": "Executed Maintenance Agreement"},
+                    {"name": "From", "value": "vendor@example.com"},
+                ]},
+            }
+        }
+
+    def search(self, query, max_results=500):
+        self.queries.append(query)
+        return ["m1"]
+
+    def message(self, message_id):
+        return self.messages[message_id]
+
+    def attachment(self, message_id, attachment_id):
+        return b""
+
+
+class ServiceTests(unittest.TestCase):
+    def test_audit_searches_all_required_document_categories_and_persists_report(self):
+        with tempfile.TemporaryDirectory() as directory:
+            gmail = GmailFake()
+            audit_store = AuditReportStore(Path(directory))
+            airtable = AirtableFake([{
+                "id": "v1",
+                "fields": {"Vendor": "ACME Services", "Contact Email": "vendor@example.com"},
+            }])
+            service = VendorReviewService(
+                airtable,
+                gmail,
+                ProposalStore(Path(directory)),
+                audit_store,
+                "viwVD8IFpH6fXUPvh",
+            )
+
+            report = service.audit(lookback_days=90, history_days=730)
+
+            self.assertEqual(len(gmail.queries), 3)
+            self.assertEqual(airtable.requested_view, "viwVD8IFpH6fXUPvh")
+            query = " ".join(gmail.queries).lower()
+            self.assertIn("newer_than:730d", query)
+            for term in ("contract", "agreement", "terms", "insurance", "policy", "maintenance", "hvac"):
+                self.assertIn(term, query)
+            self.assertEqual(report.vendors[0].findings[Category.MAINTENANCE].status, FindingStatus.DOCUMENTED_RECENT)
+            self.assertEqual(audit_store.load().vendors[0].name, "ACME Services")
+
+
+if __name__ == "__main__":
+    unittest.main()

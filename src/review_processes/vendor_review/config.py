@@ -21,23 +21,30 @@ class Config:
     airtable_token: str
     airtable_base_id: str
     airtable_vendor_table: str
+    airtable_vendor_view: str
     google_token_file: Path
     state_dir: Path
     lookback_days: int
+    history_days: int
 
     @classmethod
     def from_env(cls) -> "Config":
         load_dotenv()
-        required = ["AIRTABLE_TOKEN", "AIRTABLE_BASE_ID"]
-        missing = [name for name in required if not os.getenv(name)]
+        missing = []
+        if not (os.getenv("AIRTABLE_API_KEY") or os.getenv("AIRTABLE_TOKEN")):
+            missing.append("AIRTABLE_API_KEY")
+        if not os.getenv("AIRTABLE_BASE_ID"):
+            missing.append("AIRTABLE_BASE_ID")
         if missing:
             raise SystemExit(f"Missing environment variables: {', '.join(missing)}")
         return cls(
-            airtable_token=os.environ["AIRTABLE_TOKEN"],
-            airtable_base_id=os.environ["AIRTABLE_BASE_ID"],
-            airtable_vendor_table=os.getenv("AIRTABLE_VENDOR_TABLE", "All Vendors"),
+            airtable_token=os.getenv("AIRTABLE_API_KEY") or os.environ["AIRTABLE_TOKEN"],
+            airtable_base_id=os.getenv("AIRTABLE_BASE_ID") or "app25k6lMy8bzOhq5",
+            airtable_vendor_table=os.getenv("AIRTABLE_VENDOR_TABLE") or "tblmysPS8GSncnWSa",
+            airtable_vendor_view=os.getenv("AIRTABLE_VENDOR_VIEW") or "viwVD8IFpH6fXUPvh",
             google_token_file=Path(os.getenv("GOOGLE_TOKEN_FILE", "google-token.json")),
             state_dir=Path(os.getenv("REVIEW_STATE_DIR", ".review-state")),
             lookback_days=int(os.getenv("REVIEW_LOOKBACK_DAYS", "180")),
+            history_days=int(os.getenv("REVIEW_HISTORY_DAYS", "730")),
         )
 

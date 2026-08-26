@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +18,7 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 def authorize(client_secret: Path, token_file: Path) -> None:
     flow = InstalledAppFlow.from_client_secrets_file(str(client_secret), SCOPES)
     credentials = flow.run_local_server(port=0)
-    token_file.write_text(credentials.to_json())
+    _write_private_token(token_file, credentials.to_json())
 
 
 class GmailClient:
@@ -26,7 +28,7 @@ class GmailClient:
         credentials = Credentials.from_authorized_user_file(str(token_file), SCOPES)
         if credentials.expired and credentials.refresh_token:
             credentials.refresh(Request())
-            token_file.write_text(credentials.to_json())
+            _write_private_token(token_file, credentials.to_json())
         self.session = AuthorizedSession(credentials)
 
     def search(self, query: str, max_results: int = 500) -> list[str]:
@@ -56,3 +58,21 @@ class GmailClient:
         )
         response.raise_for_status()
         return decode(response.json()["data"])
+
+
+def _write_private_token(token_file: Path, content: str) -> None:
+    """Atomically persist OAuth material so it is never group/world-readable."""
+    token_file.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{token_file.name}.", dir=token_file.parent)
+    temporary_path = Path(temporary)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, token_file)
+        os.chmod(token_file, 0o600)
+    finally:
+        if temporary_path.exists():
+            temporary_path.unlink()

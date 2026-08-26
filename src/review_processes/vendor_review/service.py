@@ -3,24 +3,75 @@ from __future__ import annotations
 from typing import Any
 
 from .airtable import AirtableClient
+from .audit import AuditReport, review_vendors
 from .detect import detect
 from .gmail import GmailClient
 from .mime import attachments
 from .models import Proposal
-from .store import ProposalStore
+from .store import AuditReportStore, ProposalStore
 
 
 class VendorReviewService:
-    def __init__(self, airtable: AirtableClient, gmail: GmailClient, store: ProposalStore):
+    def __init__(
+        self,
+        airtable: AirtableClient,
+        gmail: GmailClient,
+        store: ProposalStore,
+        audit_store: AuditReportStore | None = None,
+        airtable_view: str | None = None,
+    ):
         self.airtable = airtable
         self.gmail = gmail
         self.store = store
+        self.audit_store = audit_store or AuditReportStore(store.state_dir)
+        self.airtable_view = airtable_view
+
+    def audit(self, lookback_days: int, history_days: int | None = None) -> AuditReport:
+        """Build and persist the complete read-only vendor review matrix."""
+        history_days = max(history_days or max(lookback_days, 730), lookback_days)
+        vendors = self.airtable.records(view=self.airtable_view)
+        messages = self._load_messages(history_days)
+        report = review_vendors(
+            vendors,
+            messages,
+            lookback_days,
+            history_days=history_days,
+        )
+        self.audit_store.save(report)
+        return report
+
+    def _load_messages(self, lookback_days: int):
+        # Keep discovery separate by control.  Gmail's search parser can turn a
+        # large mixed OR expression into a noisy result set (or omit a narrow
+        # branch), which is unacceptable for insurance/COI coverage checks.
+        queries = [
+            f"newer_than:{lookback_days}d (contract OR agreement OR terms OR renewal OR amendment OR addendum OR \"rate change\") -in:spam -in:trash",
+            f"newer_than:{lookback_days}d (insurance OR COI OR liability OR \"additional insured\" OR \"workers compensation\" OR \"insurance policy\") -in:spam -in:trash",
+            f"newer_than:{lookback_days}d (maintenance OR HVAC OR refrigeration OR plumbing OR pest OR hood OR grease OR repair OR \"service agreement\") -in:spam -in:trash",
+        ]
+        message_ids: list[str] = []
+        seen: set[str] = set()
+        for query in queries:
+            for message_id in self.gmail.search(query, max_results=2000):
+                if message_id not in seen:
+                    seen.add(message_id)
+                    message_ids.append(message_id)
+        messages = []
+        for message_id in message_ids:
+            message = self.gmail.message(message_id)
+            blobs: dict[str, bytes] = {}
+            for item in attachments(message):
+                filename = item["filename"]
+                if filename.lower().endswith((".pdf", ".doc", ".docx")):
+                    blobs[filename] = self.gmail.attachment(message_id, item["id"])
+            messages.append((message, blobs))
+        return messages
 
     def scan(self, lookback_days: int, required_store: str | None = None) -> list[Proposal]:
-        vendors = self.airtable.records()
+        vendors = self.airtable.records(view=self.airtable_view)
         query = (
             f"newer_than:{lookback_days}d "
-            "(invoice OR bill OR contract OR agreement OR enrollment) "
+            "(invoice OR bill OR contract OR agreement OR enrollment OR terms OR renewal) "
             "-in:spam -in:trash -category:promotions"
         )
         messages = []

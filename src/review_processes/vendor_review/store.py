@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
+from .audit import AuditReport
 from .models import Proposal
 
 
@@ -20,6 +22,7 @@ class ProposalStore:
         self.state_dir.mkdir(parents=True, exist_ok=True)
         temp = self.path.with_suffix(".tmp")
         temp.write_text(json.dumps([p.to_dict() for p in proposals], indent=2, default=str))
+        os.chmod(temp, 0o600)
         temp.replace(self.path)
 
     def upsert(self, incoming: list[Proposal]) -> list[Proposal]:
@@ -60,3 +63,22 @@ class ProposalStore:
                 return
         raise SystemExit(f"Unknown proposal: {updated.id}")
 
+
+class AuditReportStore:
+    """Atomic local persistence for complete read-only audit reports."""
+
+    def __init__(self, state_dir: Path):
+        self.state_dir = state_dir
+        self.path = state_dir / "audit-report.json"
+
+    def save(self, report: AuditReport) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        temp = self.path.with_suffix(".tmp")
+        temp.write_text(json.dumps(report.to_dict(), indent=2))
+        os.chmod(temp, 0o600)
+        temp.replace(self.path)
+
+    def load(self) -> AuditReport:
+        if not self.path.exists():
+            raise SystemExit(f"No audit report at {self.path}")
+        return AuditReport.from_dict(json.loads(self.path.read_text()))
