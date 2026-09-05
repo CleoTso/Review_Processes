@@ -108,7 +108,7 @@ class VendorReviewService:
         result = {"record_id": proposal.record_id, "fields": updates, "attachments": []}
         if dry_run:
             return result
-        self.airtable.update(proposal.record_id, updates)
+        pending_uploads = []
         if proposal.attachments:
             schema = self.airtable.schema()
             field_ids = {field["name"]: field["id"] for field in schema["fields"]}
@@ -118,16 +118,27 @@ class VendorReviewService:
                 if any(x.get("filename") == ref.filename for x in existing):
                     continue
                 message = self.gmail.message(ref.message_id)
-                item = next(x for x in attachments(message) if x["filename"] == ref.filename)
-                data = self.gmail.attachment(ref.message_id, item["id"])
-                self.airtable.upload_attachment(
-                    proposal.record_id,
-                    field_ids[ref.airtable_field],
-                    ref.filename,
-                    item["mime_type"],
-                    data,
+                item = next(
+                    (x for x in attachments(message) if x["filename"] == ref.filename), None
                 )
-                result["attachments"].append(ref.filename)
+                if item is None:
+                    raise RuntimeError(
+                        f"Evidence attachment {ref.filename} is no longer present on Gmail "
+                        f"message {ref.message_id}; nothing was written to Airtable. "
+                        "Rescan and approve a fresh proposal."
+                    )
+                pending_uploads.append((ref, field_ids[ref.airtable_field], item))
+        self.airtable.update(proposal.record_id, updates)
+        for ref, field_id, item in pending_uploads:
+            data = self.gmail.attachment(ref.message_id, item["id"])
+            self.airtable.upload_attachment(
+                proposal.record_id,
+                field_id,
+                ref.filename,
+                item["mime_type"],
+                data,
+            )
+            result["attachments"].append(ref.filename)
         proposal.status = "applied"
         self.store.replace(proposal)
         return result
