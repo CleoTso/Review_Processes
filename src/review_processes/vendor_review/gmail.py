@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
@@ -11,6 +9,7 @@ from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 
+from .fsutil import write_private_atomic
 from .mime import decode
 
 
@@ -124,20 +123,7 @@ class GmailClient:
 
 def _write_private_token(token_file: Path, content: str) -> None:
     """Atomically persist OAuth material so it is never group/world-readable."""
-    token_file.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{token_file.name}.", dir=token_file.parent)
-    temporary_path = Path(temporary)
-    try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            handle.write(content)
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, token_file)
-        os.chmod(token_file, 0o600)
-    finally:
-        if temporary_path.exists():
-            temporary_path.unlink()
+    write_private_atomic(token_file, content)
 
 
 def _parse_batch_messages(body: str) -> dict[str, dict[str, Any]]:
