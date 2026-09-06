@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import requests
 from google.auth.transport.requests import AuthorizedSession, Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
@@ -68,8 +69,16 @@ class GmailClient:
         for message_id in missing:
             try:
                 results[message_id] = self.message(message_id, format=format)
-            except Exception:
-                continue
+            except requests.HTTPError as exc:
+                # Only a 404 means the message itself is permanently gone
+                # (deleted or purged); skipping it cannot hide evidence that
+                # still exists.  Transient failures such as 429/5xx, or a
+                # 403 permission error, must propagate: swallowing them here
+                # silently drops the message from the evidence matrix and can
+                # turn real vendor documents into false "missing" findings.
+                if exc.response is not None and exc.response.status_code == 404:
+                    continue
+                raise
         return [results[message_id] for message_id in message_ids if message_id in results]
 
     def message(self, message_id: str, *, format: str = "full") -> dict[str, Any]:
@@ -118,7 +127,15 @@ class GmailClient:
             timeout=60,
         )
         if response.status_code >= 400:
-            return {}
+            # A batch-level HTTP failure (rate limit, transient 5xx, or a
+            # rejected request) means none of the chunk's messages were read.
+            # Returning {} here would silently drop them from the audit and
+            # produce false "missing" findings, so fail loudly instead; the
+            # monthly workflow's alert step reports the incomplete audit.
+            raise RuntimeError(
+                f"Gmail batch request failed with HTTP {response.status_code} "
+                f"for {len(message_ids)} message(s)"
+            )
         return _parse_batch_messages(response.text)
 
 
