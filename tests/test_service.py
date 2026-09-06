@@ -149,6 +149,8 @@ class ServiceTests(unittest.TestCase):
 
 
 class ApplyAirtableFake:
+    table = "tblFake"
+
     def __init__(self):
         self.updates = []
         self.uploads = []
@@ -248,3 +250,29 @@ class ApplyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UnknownFieldTests(unittest.TestCase):
+    def test_apply_names_unknown_attachment_field_instead_of_keyerror(self):
+        with tempfile.TemporaryDirectory() as directory:
+            airtable = ApplyAirtableFake()
+            # Schema deliberately lacks the proposal's attachment field.
+            airtable.schema = lambda: {"fields": [{"name": "Unrelated", "id": "fld9"}]}
+            gmail = ApplyGmailFake([
+                {"filename": "contract.pdf", "body": {"attachmentId": "att1"},
+                 "mimeType": "application/pdf"},
+            ])
+            store = ProposalStore(Path(directory))
+            service = VendorReviewService(airtable, gmail, store)
+            proposal = attachment_proposal()
+            store.upsert([proposal])
+
+            with self.assertRaises(RuntimeError) as caught:
+                service.apply(service.store.get("VR-APPLY-1"))
+
+            self.assertIn("does not exist on table", str(caught.exception))
+            self.assertIn("Contracts & Warranties", str(caught.exception))
+            # The failure is raised during validation: nothing was written.
+            self.assertEqual(airtable.updates, [])
+            self.assertEqual(airtable.uploads, [])
+            self.assertEqual(store.get("VR-APPLY-1").status, "pending")
