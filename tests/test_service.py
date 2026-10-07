@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from review_processes.vendor_review.audit import Category, FindingStatus
-from review_processes.vendor_review.models import AttachmentRef, Evidence, FieldChange, Proposal
+from review_processes.vendor_review.models import AttachmentRef, Evidence, FieldChange, Proposal, Question
 from review_processes.vendor_review.service import VendorReviewService
 from review_processes.vendor_review.store import AuditReportStore, ProposalStore
 
@@ -230,6 +230,63 @@ class ApplyTests(unittest.TestCase):
             self.assertEqual(airtable.uploads, [])
             self.assertEqual(store.get("VR-APPLY-1").status, "pending")
 
+    def test_answer_writes_validate_scan_snapshot_and_effective_value(self):
+        for name, key in [("Website", "portal_url"), ("Account #", "billing_account"), ("Payment Method", "payment_method")]:
+            for current, allowed in [("original", True), ("manual edit", False), ("answer", True)]:
+                with self.subTest(field=name, current=current), tempfile.TemporaryDirectory() as directory:
+                    airtable = ApplyAirtableFake()
+                    airtable.records["rec1"]["fields"][name] = current
+                    gmail = ApplyGmailFake([{"filename": "contract.pdf", "body": {"attachmentId": "att"}, "mimeType": "application/pdf"}])
+                    store = ProposalStore(Path(directory))
+                    proposal = attachment_proposal()
+                    proposal.source_fields = {name: "original"}
+                    proposal.questions = [Question(key, "optional", answer="answer")]
+                    if name == "Account #":
+                        proposal.changes.append(FieldChange(name, "original", "", "clear old account"))
+                    store.upsert([proposal])
+                    service = VendorReviewService(airtable, gmail, store)
+                    if allowed:
+                        result = service.apply(store.get(proposal.id))
+                        self.assertEqual(result["fields"][name], "answer")
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, "rescan"):
+                            service.apply(store.get(proposal.id))
+                        self.assertEqual(airtable.updates, [])
+                        self.assertEqual(airtable.uploads, [])
+
+    def test_legacy_answer_without_snapshot_fails_closed_except_safe_retry(self):
+        for current in (None, "answer"):
+            with self.subTest(current=current), tempfile.TemporaryDirectory() as directory:
+                airtable = ApplyAirtableFake()
+                airtable.records["rec1"]["fields"]["Website"] = current
+                proposal = attachment_proposal()
+                proposal.attachments = []
+                proposal.questions = [Question("portal_url", "portal", answer="answer")]
+                old_json = proposal.to_dict()
+                del old_json["source_fields"]
+                proposal = Proposal.from_dict(old_json)
+                self.assertIsNone(proposal.source_fields)
+                store = ProposalStore(Path(directory))
+                store.upsert([proposal])
+                service = VendorReviewService(airtable, ApplyGmailFake([]), store)
+                if current is None:
+                    with self.assertRaisesRegex(RuntimeError, "rescan"):
+                        service.apply(store.get(proposal.id))
+                    self.assertEqual(airtable.updates, [])
+                else:
+                    service.apply(store.get(proposal.id))
+
+    def test_stale_proposal_refused_before_any_airtable_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = ProposalStore(Path(directory))
+            proposal = attachment_proposal()
+            store.upsert([proposal])
+            with store.mutate(proposal.id) as current:
+                current.questions = [Question("portal_url", "portal", answer="new answer")]
+            service = VendorReviewService(object(), object(), store)
+            with self.assertRaisesRegex(RuntimeError, "changed since"):
+                service.apply(proposal)
+
     def test_dry_run_does_not_write_or_upload(self):
         with tempfile.TemporaryDirectory() as directory:
             airtable = ApplyAirtableFake()
@@ -240,6 +297,7 @@ class ApplyTests(unittest.TestCase):
             store = ProposalStore(Path(directory))
             service = VendorReviewService(airtable, gmail, store)
             proposal = attachment_proposal()
+            store.upsert([proposal])
 
             result = service.apply(proposal, dry_run=True)
 

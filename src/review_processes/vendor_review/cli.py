@@ -68,18 +68,20 @@ def main() -> None:
         elif args.command == "show":
             print(json.dumps(store.get(args.proposal_id).to_dict(), indent=2))
         elif args.command == "answer":
-            proposal = store.get(args.proposal_id)
-            question = next((q for q in proposal.questions if q.key == args.key), None)
-            if not question:
-                raise SystemExit(f"Unknown question key: {args.key}")
-            question.answer = args.value
-            store.replace(proposal)
+            with store.mutate(args.proposal_id) as proposal:
+                if proposal.status != "pending":
+                    raise SystemExit(f"Cannot answer a {proposal.status} proposal")
+                question = next((q for q in proposal.questions if q.key == args.key), None)
+                if not question:
+                    raise SystemExit(f"Unknown question key: {args.key}")
+                question.answer = args.value
             print(f"Saved answer {args.key} for {proposal.id}")
         else:
-            proposal = store.get(args.proposal_id)
-            proposal.status = "rejected"
-            proposal.decision_reason = args.reason
-            store.replace(proposal)
+            with store.mutate(args.proposal_id) as proposal:
+                if proposal.status != "pending":
+                    raise SystemExit(f"Cannot reject a {proposal.status} proposal")
+                proposal.status = "rejected"
+                proposal.decision_reason = args.reason
             print(f"Rejected and ignored {proposal.id}; Airtable was not changed")
         return
     config = Config.from_env()
@@ -92,8 +94,6 @@ def main() -> None:
         print(json.dumps([p.to_dict() for p in proposals], indent=2) if args.json else _table(proposals))
     elif args.command == "approve":
         proposal = store.get(args.proposal_id)
-        if proposal.status == "rejected":
-            raise SystemExit("Rejected proposals cannot be applied; run a new scan after correcting the evidence")
         result = service.apply(proposal, args.dry_run)
         print(json.dumps(result, indent=2))
 

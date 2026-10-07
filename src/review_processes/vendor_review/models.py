@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 from typing import Any, Literal
@@ -57,14 +58,18 @@ class Proposal:
     status: Status = "pending"
     decision_reason: str | None = None
     error: str | None = None
+    # Scan-time values for fields that optional answers can write. None means
+    # legacy JSON, not a snapshot of empty fields.
+    source_fields: dict[str, Any] | None = None
 
     @property
     def fingerprint(self) -> str:
-        payload = "|".join(
-            [self.kind, self.record_id]
-            + [f"{c.field_name}:{c.before!r}:{c.after!r}" for c in self.changes]
-            + [f"{a.message_id}:{a.filename}" for a in self.attachments]
-        )
+        # Evidence identity survives application, mutable field values and dates.
+        payload = json.dumps([
+            self.kind, self.record_id,
+            sorted({(e.message_id, e.attachment_name or "") for e in self.evidence}),
+            sorted({(a.message_id, a.filename) for a in self.attachments}),
+        ])
         return sha256(payload.encode()).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:

@@ -91,6 +91,15 @@ class VendorReviewService:
         return pending
 
     def apply(self, proposal: Proposal, dry_run: bool = False) -> dict[str, Any]:
+        with self.store.transaction():
+            current = self.store.get(proposal.id)
+            if current.status not in {"pending", "approved"}:
+                raise RuntimeError(f"Proposal is {current.status}; rescan before approval")
+            if current.to_dict() != proposal.to_dict():
+                raise RuntimeError("Proposal changed since it was read; review current proposal before approval")
+            return self._apply(current, dry_run)
+
+    def _apply(self, proposal: Proposal, dry_run: bool) -> dict[str, Any]:
         unanswered = [q.prompt for q in proposal.questions if q.required and not q.answer]
         if unanswered:
             raise RuntimeError("Required questions remain: " + "; ".join(unanswered))
@@ -98,10 +107,18 @@ class VendorReviewService:
         fields = current["fields"]
         updates = {change.field_name: change.after for change in proposal.changes}
         self._add_answers(proposal, updates)
+        before = {change.field_name: change.before for change in proposal.changes}
+        # Answers may override a displayed change's 'after', or add a new write.
+        # Compare against the scan-time snapshot and the FINAL intended value.
+        if proposal.source_fields is not None:
+            before.update(proposal.source_fields)
+        missing = [name for name, intended in updates.items() if name not in before and fields.get(name) != intended]
+        if missing:
+            raise RuntimeError("Proposal lacks scan-time before-values; rescan before approval: " + ", ".join(missing))
         drift = [
-            change.field_name
-            for change in proposal.changes
-            if fields.get(change.field_name) not in (change.before, change.after)
+            name for name, intended in updates.items()
+            if fields.get(name) != intended
+            and (name not in before or fields.get(name) != before[name])
         ]
         if drift:
             raise RuntimeError("Airtable changed since scan; rescan before approval: " + ", ".join(drift))
