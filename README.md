@@ -37,7 +37,23 @@ agreement or coverage proof. Without a recognizable proof attachment, the body m
 assert supply of the relevant category's document or contain category-specific details;
 a subject title plus an unrelated enclosure remains a lead. Supply uses an explicit
 category-document subject/object grammar: an attached invoice *for* an insurance policy
-is not supply of that policy. Signed/executed details must describe a completed document
+is not supply of that policy. Active (`We supplied the insurance policy`) and inverted
+(`Attached is the COI`) frames, possession statements and completed-document headings
+must name the complete recognized document object at the
+end of the asserted clause, or before `and` introducing an independent supply statement
+(with an explicit supply predicate and, for subject-first statements, at most eight
+subject words). A narrow `for service/maintenance starting/beginning/commencing next/this
+week/month/quarter/year` scheduling qualifier is also supported after a complete object.
+A category-noun prefix in `insurance policy invoice`, `COI billing
+statement`, or another unrecognized compound object is not proof. Wrapped plain/HTML
+lines do not terminate the object. This deliberately conservative body-only grammar
+does not recognize arbitrary object modifiers or noun coordination: for example,
+`We supplied the policy for review today` alone remains a lead without coverage details
+or a proof attachment. Subject-first `The insurance policy is enclosed for review today`
+remains supported. Independently supplied true documents in the same message are not
+vetoed by invoice mentions, and true proof attachments remain authoritative. These are
+phrase-based evidence heuristics, not general NLP or legal/coverage verification.
+Signed/executed details must describe a completed document
 (standalone completed-document heading, possession, or an affirmative document predicate),
 not a plan/intention to obtain one. Planned/future recurring maintenance without supplied,
 signed, or executed-document evidence also remains a lead; genuinely enclosed agreements

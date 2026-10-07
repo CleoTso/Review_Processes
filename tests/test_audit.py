@@ -589,6 +589,143 @@ class ProofRegressionTests(unittest.TestCase):
         self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
         self.assertIsNone(finding.evidence[0].attachment_name)
 
+    def test_completed_document_possession_and_headings_require_complete_objects(self):
+        for category, document in [
+            (Category.CONTRACT_TERMS, "signed contract"),
+            (Category.MAINTENANCE, "signed maintenance agreement"),
+        ]:
+            for frame in ("We received the {}.", "We have obtained the {}.",
+                          "We hold the {}.", "{}.", "{} terms.",
+                          "We obtained a {} for service starting next month."):
+                with self.subTest(category=category, frame=frame):
+                    self.assertEqual(self.finding(category, "Agreement", frame.format(document)).status,
+                                     FindingStatus.DOCUMENTED_RECENT)
+            for suffix in ("invoice", "billing statement", "terms invoice"):
+                for frame in ("We received the {}.", "We have obtained the {}.",
+                              "We hold the {}.", "{}."):
+                    with self.subTest(category=category, suffix=suffix, frame=frame):
+                        self.assert_lead_without_proof_attachment(self.finding(
+                            category, "Agreement", frame.format(f"{document} {suffix}")))
+
+    def test_active_and_inverted_invoice_objects_are_not_supplied_documents(self):
+        cases = [
+            (Category.INSURANCE, "Insurance", "insurance policy"),
+            (Category.INSURANCE, "COI", "COI"),
+            (Category.INSURANCE, "Insurance", "certificate of insurance"),
+            (Category.CONTRACT_TERMS, "Signed contract", "signed contract"),
+            (Category.MAINTENANCE, "Maintenance", "signed maintenance agreement"),
+        ]
+        for category, subject, document in cases:
+            for suffix in ("invoice", "billing statement"):
+                filename = f"{document}-{suffix}.pdf".replace(" ", "-")
+                for frame in ("We supplied the {}.", "We have provided the {}.",
+                              "Attached is the {}.", "Enclosed is the {}."):
+                    statement = frame.format(f"{document} {suffix}")
+                    wrapped = frame.format(f"{document}\n{suffix}")
+                    layouts = [
+                        (statement, None),
+                        (wrapped, "text/plain"),
+                        (wrapped.replace("\n", "<br>"), "text/html"),
+                        ("<p>" + wrapped.replace("\n", "</p><p>") + "</p>", "text/html"),
+                    ]
+                    for body, mime_type in layouts:
+                        for filenames in ((), (filename,)):
+                            with self.subTest(category=category, body=body, filenames=filenames):
+                                self.assert_lead_without_proof_attachment(self.finding(
+                                    category, subject, body, filenames, mime_type=mime_type,
+                                    pdf_content=f"The {document} is enclosed.",
+                                ))
+
+    def test_supply_object_boundary_is_not_an_invoice_suffix_blacklist(self):
+        for category, subject, document in [
+            (Category.INSURANCE, "Insurance", "insurance policy"),
+            (Category.INSURANCE, "COI", "COI"),
+            (Category.CONTRACT_TERMS, "Signed contract", "signed contract"),
+            (Category.MAINTENANCE, "Maintenance", "signed maintenance agreement"),
+        ]:
+            for suffix in ("request", "quote", "summary", "payment notice"):
+                for frame in ("We supplied the {}.", "Attached is the {}.",
+                              "The {} is enclosed."):
+                    body = frame.format(f"{document} {suffix}")
+                    with self.subTest(category=category, body=body):
+                        self.assert_lead_without_proof_attachment(self.finding(category, subject, body))
+        # Ambiguous noun coordination is not a boundary introducing an
+        # independent supply statement; a plural invoice head can apply to both.
+        for body in [
+            "We supplied the insurance policy and COI invoices.",
+            "Attached is the COI and insurance policy billing statement.",
+        ]:
+            self.assert_lead_without_proof_attachment(self.finding(Category.INSURANCE, "Insurance", body))
+
+    def test_complete_supply_objects_remain_proof_in_plain_and_html_layouts(self):
+        for category, subject, document in [
+            (Category.INSURANCE, "Insurance", "insurance policy"),
+            (Category.INSURANCE, "COI", "COI"),
+            (Category.CONTRACT_TERMS, "Signed contract", "signed contract"),
+            (Category.MAINTENANCE, "Maintenance", "signed maintenance agreement"),
+        ]:
+            filename = f"{document}-invoice.pdf".replace(" ", "-")
+            for frame in ("We supplied the\n{}.", "We have provided the\n{}.",
+                          "Attached is the\n{}.", "Enclosed is the\n{}.",
+                          "The {}\nis enclosed for review today."):
+                wrapped = frame.format(document)
+                for body, mime_type in [
+                    (wrapped, "text/plain"),
+                    ("<div>" + wrapped.replace("\n", "</div><div>") + "</div>", "text/html"),
+                ]:
+                    for filenames in ((), (filename,)):
+                        with self.subTest(category=category, body=body, filenames=filenames):
+                            finding = self.finding(category, subject, body, filenames, mime_type=mime_type)
+                            self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
+                            self.assertIsNone(finding.evidence[0].attachment_name)
+                            self.assertTrue(finding.evidence[0].facts[0].endswith("evidence"))
+
+    def test_independently_supplied_documents_survive_invoice_mentions(self):
+        for category, subject, document in [
+            (Category.INSURANCE, "Insurance", "insurance policy"),
+            (Category.INSURANCE, "COI", "COI"),
+            (Category.CONTRACT_TERMS, "Signed contract", "signed contract"),
+            (Category.MAINTENANCE, "Maintenance", "signed maintenance agreement"),
+        ]:
+            filename = f"{document}-invoice.pdf".replace(" ", "-")
+            for statement in [
+                f"We supplied the {document}. We supplied the {document} invoice.",
+                f"Attached is the {document} billing statement. Attached is the {document}.",
+                f"We supplied the {document}, and the {document} invoice is attached.",
+                f"We supplied the {document} invoice, and we supplied the {document}.",
+                f"Attached is the {document}, and we supplied the invoice.",
+                f"We supplied the {document} invoice, and attached is the {document}.",
+                f"The invoice is attached, and we supplied the {document}.",
+                f"We supplied the invoice, and the {document} is enclosed.",
+            ]:
+                for body, mime_type in [
+                    (statement, "text/plain"),
+                    ("<p>" + statement.replace(". ", ".</p><p>") + "</p>", "text/html"),
+                ]:
+                    for filenames in ((), (filename,)):
+                        with self.subTest(category=category, body=body, filenames=filenames):
+                            finding = self.finding(category, subject, body, filenames, mime_type=mime_type)
+                            self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
+                            self.assertIsNone(finding.evidence[0].attachment_name)
+
+    def test_true_proof_attachments_override_invoice_only_supply_objects(self):
+        for category, subject, document, proof in [
+            (Category.INSURANCE, "Insurance", "insurance policy", "policy.pdf"),
+            (Category.INSURANCE, "COI", "COI", "COI.docx"),
+            (Category.CONTRACT_TERMS, "Signed contract", "signed contract", "agreement.pdf"),
+            (Category.MAINTENANCE, "Maintenance", "signed maintenance agreement", "maintenance.doc"),
+        ]:
+            for suffix in ("invoice", "billing statement"):
+                excluded = f"{document}-{suffix}.pdf".replace(" ", "-")
+                for frame in ("We supplied the {}.", "Attached is the {}."):
+                    body = frame.format(f"{document} {suffix}")
+                    with self.subTest(category=category, body=body):
+                        finding = self.finding(category, subject, body, [excluded, proof])
+                        self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
+                        self.assertEqual(finding.evidence[0].attachment_name, proof)
+                        self.assertEqual(finding.evidence[0].facts[-1], f"Attachment: {proof}")
+                        self.assertNotIn(excluded, " ".join(finding.evidence[0].facts))
+
     def test_explicit_coi_and_insurance_policy_supply_without_attachments(self):
         for subject, document in [("COI", "COI"), ("Insurance", "insurance policy")]:
             for body in [f"The {document} is enclosed.", f"The {document} is attached.",

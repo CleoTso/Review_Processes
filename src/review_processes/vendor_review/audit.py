@@ -528,7 +528,9 @@ def _is_strong_evidence(
             # or a denial from the document statement itself.
             if _matches_any(clause, supply):
                 clause = re.sub(r"^(?:as\s+(?:requested|required)|(?:as\s+)?per\s+(?:your|our)\s+request)\s*,?\s*", "", clause)
-                clause = re.sub(r"\b(?:you\s+requested|(?:the|your|our)\s+requested)\b", "the", clause)
+                # Remove the relative modifier without leaving an object suffix.
+                clause = re.sub(r"\s+you\s+requested\b", "", clause)
+                clause = re.sub(r"\b(?:the|your|our)\s+requested\b", "the", clause)
             if clause and not _matches_any(clause, non_proof):
                 clauses.append(clause)
         return clauses
@@ -570,17 +572,29 @@ def _is_strong_evidence(
     }[category]
     noun = rf"(?:(?:the|a|an|our|your)\s+)?{document}\b"
     boundary = r"(?:^|,?\s+and\s+)"
+    supply_verb = r"(?:issued|supplied|provided|attached|enclosed|signed|executed)"
+    passive_supply = rf"(?:is|are|was|were|has\s+been|have\s+been)\s+(?:fully\s+)?{supply_verb}\b"
+    active_supply = rf"(?:we|i)\s+(?:have\s+)?{supply_verb}\b"
+    inverted_supply = r"(?:attached|enclosed)\s+(?:is|are)\b"
+    # In object position a word boundary is insufficient: "policy invoice"
+    # supplies an invoice, not a policy. Conservatively require the complete
+    # recognized noun at clause end, or before "and" introducing another finite
+    # supply statement (a bounded subject + predicate, not noun coordination).
+    # Visual wraps have already been joined; they never terminate the object.
+    next_supply = rf"(?:{active_supply}|{inverted_supply}|(?:[\w’'-]+\s+){{1,8}}{passive_supply})"
+    service_schedule = r"(?:\s+for\s+(?:service|maintenance)\s+(?:starting|beginning|commencing)\s+(?:next|this)\s+(?:week|month|quarter|year))?"
+    object_end = rf"{service_schedule}(?=$|,?\s+and\s+{next_supply})"
     bound_supply = (
-        rf"{boundary}{noun}\s+(?:is|are|was|were|has\s+been|have\s+been)\s+(?:fully\s+)?(?:issued|supplied|provided|attached|enclosed|signed|executed)\b",
-        rf"{boundary}(?:attached|enclosed)\s+(?:is|are)\s+{noun}",
-        rf"{boundary}(?:we|i)\s+(?:have\s+)?(?:issued|supplied|provided|attached|enclosed|signed|executed)\s+{noun}",
+        rf"{boundary}{noun}\s+{passive_supply}",
+        rf"{boundary}{inverted_supply}\s+{noun}{object_end}",
+        rf"{boundary}{active_supply}\s+{noun}{object_end}",
     )
     existing_document = (
         # A standalone completed-document heading is an explicit assertion;
         # embedding the same words in an acquisition plan is not.
-        rf"^{noun}(?:$|\s+terms?\b)",
+        rf"^{noun}(?:\s+terms?)?{object_end}",
         rf"^{noun}\s+(?:covers|governs|includes|provides|is\s+(?:effective|in\s+force))\b",
-        rf"^(?:we|i)\s+(?:have(?:\s+(?:received|obtained))?|received|obtained|hold)\s+{noun}",
+        rf"^(?:we|i)\s+(?:have(?:\s+(?:received|obtained))?|received|obtained|hold)\s+{noun}{object_end}",
     )
     details = {
         Category.CONTRACT_TERMS: (
