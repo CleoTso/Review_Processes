@@ -43,18 +43,31 @@ class GmailClient:
         self.session = AuthorizedSession(credentials)
 
     def search(self, query: str, max_results: int = 500) -> list[str]:
+        if isinstance(max_results, bool) or not isinstance(max_results, int) or max_results <= 0:
+            raise ValueError("max_results must be a positive integer")
         ids: list[str] = []
-        params: dict[str, Any] = {"q": query, "maxResults": min(max_results, 500)}
+        params: dict[str, Any] = {"q": query}
         while len(ids) < max_results:
+            params["maxResults"] = min(max_results - len(ids), 500)
             response = self.session.get(f"{self.API}/messages", params=params, timeout=30)
             response.raise_for_status()
             body = response.json()
-            ids.extend(item["id"] for item in body.get("messages", []))
+            messages = body.get("messages", [])
+            if len(messages) > params["maxResults"]:
+                raise RuntimeError(
+                    "Gmail search returned more messages than requested; results may be incomplete."
+                )
+            ids.extend(item["id"] for item in messages)
             token = body.get("nextPageToken")
             if not token:
                 break
+            if len(ids) == max_results:
+                raise RuntimeError(
+                    "Gmail search exceeds max_results; results are incomplete. "
+                    "Narrow the search or increase max_results."
+                )
             params["pageToken"] = token
-        return ids[:max_results]
+        return ids
 
     def messages(self, message_ids: list[str], *, format: str = "full") -> list[dict[str, Any]]:
         """Fetch many Gmail messages, skipping ones that cannot be read."""
