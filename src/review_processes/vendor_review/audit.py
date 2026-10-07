@@ -543,6 +543,7 @@ def _is_strong_evidence(
         ),
         Category.INSURANCE: (
             r"\bcertificate\s+of\s+insurance\b", r"\binsurance\s+certificate\b",
+            r"\bcoi\b", r"\binsurance\s+policy\b",
             r"\badditional\s+insured\b", r"\bpolicy\s+(?:number|no\.?|period|term|limits?)\b",
             r"\bdeclarations\s+page\b", r"\bcoverage\s+(?:limit|limits|period|effective|expires?)\b",
         ),
@@ -632,7 +633,7 @@ def _is_strong_evidence(
 
 def _non_proof_filename(filename: str) -> bool:
     return bool(re.search(
-        r"\b(?:quotes?|quotations?|proposals?|request(?:s|ed|ing)?|brochures?|flyers?|marketing|offers?|samples?|templates?|drafts?|unsigned|unexecuted|unissued|missing|pending|awaiting)\b"
+        r"\b(?:invoices?|billing|quotes?|quotations?|proposals?|request(?:s|ed|ing)?|brochures?|flyers?|marketing|offers?|samples?|templates?|drafts?|unsigned|unexecuted|unissued|missing|pending|awaiting)\b"
         r"|\b(?:not|never)\s+(?:signed|executed|issued)\b",
         re.sub(r"[_-]+", " ", filename), re.I,
     ))

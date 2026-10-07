@@ -45,7 +45,10 @@ scheduling future service remain evidence.
 Conditional and interrogative scope is retained across wrapped plain text and HTML
 visual breaks. An independent affirmative enclosure in the body remains evidence even
 before a separate request to forward, attach, or upload it; recognizable proof
-attachments remain authoritative.
+attachments remain authoritative. Filename-only proof recognition conservatively supports
+PDF, DOC, and DOCX documents, not images or other attachment formats. Clearly labelled
+invoice/billing, quote, draft, and marketing attachments are neither filename-only proof
+nor displayed proof attachments, even when their names mention a policy or maintenance.
 
 ## Safety model
 

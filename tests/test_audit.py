@@ -550,6 +550,67 @@ class ProofRegressionTests(unittest.TestCase):
                     self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
                     self.assertIsNone(finding.evidence[0].attachment_name)
 
+    def test_policy_and_maintenance_invoice_filenames_are_not_proof_or_presented_attachments(self):
+        cases = [
+            (Category.INSURANCE, "Certificate of Insurance", "The invoice for the insurance policy is attached.", "insurance-policy-invoice.pdf"),
+            (Category.INSURANCE, "Insurance", "The billing statement for the policy is attached.", "policy_billing.docx"),
+            (Category.MAINTENANCE, "Maintenance", "The invoice for the maintenance agreement is attached.", "maintenance-invoice.pdf"),
+            (Category.MAINTENANCE, "Maintenance", "We plan to start recurring maintenance next month. The invoice is attached.", "maintenance_billing.doc"),
+        ]
+        for category, subject, body, filename in cases:
+            with self.subTest(filename=filename):
+                # Even extracted proof-like headings in a labelled invoice cannot
+                # supply proof; the filename policy governs presentation too.
+                self.assert_lead_without_proof_attachment(self.finding(
+                    category, subject, body, [filename],
+                    pdf_content="The insurance policy is enclosed. The signed maintenance agreement is enclosed.",
+                ))
+
+    def test_actual_documents_survive_invoice_filter_and_supported_document_extensions(self):
+        for extension in ("pdf", "doc", "docx"):
+            for category, subject, invoice, document in [
+                (Category.INSURANCE, "Insurance", "policy-invoice.pdf", "policy"),
+                (Category.INSURANCE, "COI", "COI-billing.docx", "COI"),
+                (Category.MAINTENANCE, "Maintenance", "maintenance-invoice.pdf", "maintenance-agreement"),
+                (Category.CONTRACT_TERMS, "Signed contract", "contract-invoice.pdf", "signed-agreement"),
+            ]:
+                filename = f"{document}.{extension}"
+                for filenames in ([filename], [invoice, filename]):
+                    with self.subTest(category=category, filenames=filenames):
+                        finding = self.finding(category, subject, "Please provide the document.", filenames)
+                        self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
+                        self.assertEqual(finding.evidence[0].attachment_name, filename)
+                        self.assertEqual(finding.evidence[0].facts[-1], f"Attachment: {filename}")
+                        self.assertNotIn(invoice, " ".join(finding.evidence[0].facts))
+        # A supplied agreement remains evidence, but its accompanying invoice is
+        # not misrepresented as the proof attachment.
+        finding = self.finding(Category.MAINTENANCE, "Maintenance",
+                               "The signed maintenance agreement is enclosed.", ["maintenance-invoice.pdf"])
+        self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
+        self.assertIsNone(finding.evidence[0].attachment_name)
+
+    def test_explicit_coi_and_insurance_policy_supply_without_attachments(self):
+        for subject, document in [("COI", "COI"), ("Insurance", "insurance policy")]:
+            for body in [f"The {document} is enclosed.", f"The {document} is attached.",
+                         f"We supplied the {document}.", f"Attached is the {document}."]:
+                with self.subTest(subject=subject, body=body):
+                    finding = self.finding(Category.INSURANCE, subject, body)
+                    self.assertEqual(finding.status, FindingStatus.DOCUMENTED_RECENT)
+                    self.assertIsNone(finding.evidence[0].attachment_name)
+                    self.assertEqual(finding.evidence[0].facts, ["Insurance or COI evidence"])
+            for body in [f"The invoice for the {document} is attached.",
+                         f"We plan to obtain the {document} next month.",
+                         f"If the {document} is enclosed, please forward it.",
+                         f"The {document} is not enclosed."]:
+                with self.subTest(subject=subject, body=body):
+                    self.assert_lead_without_proof_attachment(self.finding(Category.INSURANCE, subject, body))
+
+    def test_image_filenames_do_not_establish_documentary_proof(self):
+        for filename in ["COI.png", "policy.jpg", "certificate.webp"]:
+            with self.subTest(filename=filename):
+                self.assert_lead_without_proof_attachment(
+                    self.finding(Category.INSURANCE, "Insurance", "Please provide the document.", [filename]))
+
     def test_supply_predicate_belongs_to_category_document_not_invoice(self):
         cases = [
             (Category.INSURANCE, "Certificate of insurance", "The invoice for the insurance policy is attached."),
