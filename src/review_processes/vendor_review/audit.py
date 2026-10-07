@@ -571,19 +571,23 @@ def _is_strong_evidence(
         Category.MAINTENANCE: r"(?:(?:fully\s+)?(?:signed|executed)\s+)?(?:preventive\s+)?(?:maintenance|service)\s+(?:plan|agreement|contract|schedule)s?",
     }[category]
     noun = rf"(?:(?:the|a|an|our|your)\s+)?{document}\b"
-    boundary = r"(?:^|,?\s+and\s+)"
+    # Only explicit comma-delimited statements may introduce another supply
+    # frame. Bare "and" can coordinate an invoice's unfinished object/subject,
+    # as in "invoice for the policy and the COI is attached".
+    boundary = r"(?:^|,\s+and\s+)"
     supply_verb = r"(?:issued|supplied|provided|attached|enclosed|signed|executed)"
     passive_supply = rf"(?:is|are|was|were|has\s+been|have\s+been)\s+(?:fully\s+)?{supply_verb}\b"
     active_supply = rf"(?:we|i)\s+(?:have\s+)?{supply_verb}\b"
     inverted_supply = r"(?:attached|enclosed)\s+(?:is|are)\b"
     # In object position a word boundary is insufficient: "policy invoice"
     # supplies an invoice, not a policy. Conservatively require the complete
-    # recognized noun at clause end, or before "and" introducing another finite
-    # supply statement (a bounded subject + predicate, not noun coordination).
+    # recognized noun at clause end, or before ", and" introducing another
+    # finite supply statement (a bounded subject + predicate, not noun
+    # coordination). Bare conjunctions are deliberately not boundaries.
     # Visual wraps have already been joined; they never terminate the object.
     next_supply = rf"(?:{active_supply}|{inverted_supply}|(?:[\w’'-]+\s+){{1,8}}{passive_supply})"
     service_schedule = r"(?:\s+for\s+(?:service|maintenance)\s+(?:starting|beginning|commencing)\s+(?:next|this)\s+(?:week|month|quarter|year))?"
-    object_end = rf"{service_schedule}(?=$|,?\s+and\s+{next_supply})"
+    object_end = rf"{service_schedule}(?=$|,\s+and\s+{next_supply})"
     bound_supply = (
         rf"{boundary}{noun}\s+{passive_supply}",
         rf"{boundary}{inverted_supply}\s+{noun}{object_end}",

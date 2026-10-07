@@ -40,9 +40,13 @@ category-document subject/object grammar: an attached invoice *for* an insurance
 is not supply of that policy. Active (`We supplied the insurance policy`) and inverted
 (`Attached is the COI`) frames, possession statements and completed-document headings
 must name the complete recognized document object at the
-end of the asserted clause, or before `and` introducing an independent supply statement
-(with an explicit supply predicate and, for subject-first statements, at most eight
-subject words). A narrow `for service/maintenance starting/beginning/commencing next/this
+end of the asserted clause, or before comma-delimited `, and` introducing an independent
+supply statement (with an explicit supply predicate and, for subject-first statements,
+at most eight subject words). Bare `and` is never a statement/object boundary in this
+finite grammar: `The invoice for the insurance policy and the COI is attached` asserts
+only invoice supply and remains a lead. Even genuine bare-`and` continuations may be
+missed; use separate sentences or explicit comma-delimited independent statements.
+A narrow `for service/maintenance starting/beginning/commencing next/this
 week/month/quarter/year` scheduling qualifier is also supported after a complete object.
 A category-noun prefix in `insurance policy invoice`, `COI billing
 statement`, or another unrecognized compound object is not proof. Wrapped plain/HTML

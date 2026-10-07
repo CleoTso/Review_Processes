@@ -657,6 +657,38 @@ class ProofRegressionTests(unittest.TestCase):
         ]:
             self.assert_lead_without_proof_attachment(self.finding(Category.INSURANCE, "Insurance", body))
 
+    def test_bare_and_cannot_detach_a_document_from_a_coordinated_invoice_object(self):
+        for category, subject, first, second in [
+            (Category.INSURANCE, "Insurance", "insurance policy", "COI"),
+            (Category.INSURANCE, "COI", "COI", "certificate of insurance"),
+            (Category.CONTRACT_TERMS, "Signed contract", "signed contract", "signed agreement"),
+            (Category.MAINTENANCE, "Maintenance", "signed maintenance agreement", "maintenance plan"),
+        ]:
+            filename = f"{first}-invoice.pdf".replace(" ", "-")
+            for statement in [
+                f"The invoice for the {first} and the {second} is attached.",
+                f"The billing statement for the {first} and the {second} is enclosed.",
+                f"We supplied the invoice for the {first} and the {second} is attached.",
+                # This finite grammar intentionally requires a comma even for
+                # genuine independent continuations; bare 'and' is ambiguous.
+                f"The invoice is attached and the {second} is enclosed.",
+                f"We supplied the {first} and we supplied the invoice.",
+                f"Attached is the {first} and the invoice is attached.",
+            ]:
+                wrapped = statement.replace(" and ", "\nand\n")
+                for body, mime_type in [
+                    (statement, "text/plain"),
+                    (wrapped, "text/plain"),
+                    (wrapped.replace("\n", "<br>"), "text/html"),
+                    ("<p>" + wrapped.replace("\n", "</p><p>") + "</p>", "text/html"),
+                ]:
+                    for filenames in ((), (filename,)):
+                        with self.subTest(category=category, body=body, filenames=filenames):
+                            self.assert_lead_without_proof_attachment(self.finding(
+                                category, subject, body, filenames, mime_type=mime_type,
+                                pdf_content=f"The {second} is enclosed.",
+                            ))
+
     def test_complete_supply_objects_remain_proof_in_plain_and_html_layouts(self):
         for category, subject, document in [
             (Category.INSURANCE, "Insurance", "insurance policy"),
@@ -697,10 +729,15 @@ class ProofRegressionTests(unittest.TestCase):
                 f"We supplied the {document} invoice, and attached is the {document}.",
                 f"The invoice is attached, and we supplied the {document}.",
                 f"We supplied the invoice, and the {document} is enclosed.",
+                f"The invoice is attached, and the {document} is enclosed.",
             ]:
+                wrapped = statement.replace(", and ", ",\nand\n").replace(". ", ".\n")
                 for body, mime_type in [
                     (statement, "text/plain"),
                     ("<p>" + statement.replace(". ", ".</p><p>") + "</p>", "text/html"),
+                    (wrapped, "text/plain"),
+                    ("<p>" + wrapped.replace("\n", "</p><p>") + "</p>", "text/html"),
+                    (wrapped.replace("\n", "<br>"), "text/html"),
                 ]:
                     for filenames in ((), (filename,)):
                         with self.subTest(category=category, body=body, filenames=filenames):
