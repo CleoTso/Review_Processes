@@ -39,7 +39,22 @@ agreement or coverage proof.
 
 `audit` and `scan` are read-only against Airtable. They create local, atomic
 JSON state only. Airtable is changed only by `approve`, which applies the
-exact displayed changes after checking for record drift.
+exact displayed changes after checking for record drift, including optional
+answer-derived fields against their scan-time snapshot. Legacy proposals without
+those before-values require a rescan unless the field already equals the final
+intended value.
+
+Proposal decisions use a private, reentrant `.proposals.lock` covering read through
+write (and all approval side effects). This is a POSIX `flock` lock for cooperating
+processes sharing a local state directory, not a distributed lock or an Airtable
+transaction. Keep the lock file in place; do not delete it while writers run.
+Proposal IDs and stable record/kind/evidence identities must be unique; ambiguous
+legacy state fails closed and requires manual reconciliation. Audit report storage
+is unchanged. Rescans and stale full-list saves preserve every non-pending proposal,
+including legacy approved payloads and failed-apply history. Only an explicit replacement
+may advance legacy `approved` to `applied`, with all reviewed payload fields unchanged.
+Provider-transition replay recognizes both legal and DBA names, so a newly assigned
+account on the target provider is not treated as an old supplier account.
 
 The audit stores evidence metadata (message ID, sender, subject, date, Gmail
 link, attachment name, and short facts), not the full email body. Gmail is read

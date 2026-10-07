@@ -85,6 +85,14 @@ def detect_electricity_transition(
         return None
     vendor = candidates[0]
     fields = vendor["fields"]
+    # This is a provider transition, not permission to clear a target provider's
+    # newly assigned account or to reapply an already completed contract.
+    provider_names = {normalized(company)}
+    # Airtable may display just the DBA, rather than the full legal supplier.
+    provider_names.update(name for part in re.split(r"\bdba\b", company, flags=re.I)
+                              if (name := normalized(part.strip(" ,"))))
+    if normalized(str(fields.get("Vendor", ""))) in provider_names:
+        return None
     email = _first(r"Email:\s*([^\s]+@[^\s]+)", text) or _preferred_email(text)
     sender_email = _first(EMAIL_RE, headers(message).get("from", ""))
     phone = _first(r"Toll Free Number:\s*([^\n]+)", text) or _preferred_phone(text)
@@ -156,6 +164,7 @@ def detect_electricity_transition(
         evidence=[evidence],
         attachments=[AttachmentRef(message["id"], filename)] if filename else [],
         questions=questions,
+        source_fields={name: fields.get(name) for name in ("Website", "Account #", "Payment Method")},
     )
 
 
