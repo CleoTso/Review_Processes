@@ -127,7 +127,14 @@ class VendorReviewService:
                         f"message {ref.message_id}; nothing was written to Airtable. "
                         "Rescan and approve a fresh proposal."
                     )
-                pending_uploads.append((ref, field_ids[ref.airtable_field], item))
+                field_id = field_ids.get(ref.airtable_field)
+                if field_id is None:
+                    raise RuntimeError(
+                        f"Airtable field {ref.airtable_field!r} for evidence attachment "
+                        f"{ref.filename} does not exist on table {self.airtable.table!r}; "
+                        "nothing was written to Airtable. Rescan and approve a fresh proposal."
+                    )
+                pending_uploads.append((ref, field_id, item))
         self.airtable.update(proposal.record_id, updates)
         for ref, field_id, item in pending_uploads:
             data = self.gmail.attachment(ref.message_id, item["id"])
