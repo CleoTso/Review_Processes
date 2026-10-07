@@ -88,7 +88,7 @@ _CONTRACT_TERMS = (
 _SOLICITATION_TERMS = (
     r"\bget\s+a\s+(?:free\s+)?quote\b",
     r"\bno[- ]pressure\s+quote\b",
-    r"\brequest(?:ing)?\b",
+    r"\brequest(?:s|ed|ing)?\b",
     r"\binquir(?:y|e)\b",
     r"\bwe\s+offer\b",
     r"\bare\s+you\s+the\s+right\s+person\b",
@@ -98,15 +98,25 @@ _SOLICITATION_TERMS = (
 )
 
 
-def clean_text(value: str) -> str:
-    """Return searchable text without HTML markup or legal boilerplate links."""
+def clean_text(value: str, *, preserve_lines: bool = False) -> str:
+    """Return searchable text, optionally retaining visual line breaks."""
     value = re.sub(
         r"<a\b[^>]*(?:legal|terms|privacy)[^>]*>.*?</a>",
         " ",
         value or "",
         flags=re.I | re.S,
     )
-    return re.sub(r"\s+", " ", unescape(_TAG_RE.sub(" ", value))).strip()
+    if preserve_lines:
+        # Retain layout for follow-up detection, not as sentence boundaries:
+        # HTML blocks and plain-text lines can both wrap a single request.
+        value = re.sub(
+            r"</?(?:p|div|br|li|ul|ol|table|tr|td|th|h[1-6]|blockquote|section|article)\b[^>]*>",
+            "\n", value, flags=re.I,
+        )
+    value = unescape(_TAG_RE.sub(" ", value))
+    if preserve_lines:
+        return "\n".join(re.sub(r"[^\S\n]+", " ", line).strip() for line in value.splitlines()).strip()
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def classify_document(subject: str, body: str, filenames: Iterable[str]) -> set[Category]:
@@ -324,19 +334,25 @@ def review_vendors(
             continue
         scanned += 1
         subject = headers(message).get("subject", "")
-        body = clean_text(supplied_body) if supplied_body is not None else clean_text(text_parts(message))
+        body = clean_text(supplied_body if supplied_body is not None else text_parts(message), preserve_lines=True)
         filenames = [str(name) for name in blobs]
         filenames.extend(item["filename"] for item in message_attachments(message) if item.get("filename"))
+        proof_body = body
         for filename, data in blobs.items():
             if str(filename).lower().endswith(".pdf") and isinstance(data, (bytes, bytearray)):
-                body = clean_text(f"{body} {pdf_text(bytes(data))}")
+                extracted = pdf_text(bytes(data))
+                # Keep broad category/vendor discovery, but never use a request,
+                # quote or brochure's document headings as supplied proof.
+                body = clean_text(f"{body}\n{extracted}", preserve_lines=True)
+                if not _non_proof_filename(str(filename)):
+                    proof_body = clean_text(f"{proof_body}\n{extracted}", preserve_lines=True)
         categories = classify_document(subject, body, filenames)
         if not categories:
             continue
 
         vendor_index = _match_vendor(identities, message, subject, body, filenames)
         for category in categories:
-            candidate = _candidate(message, subject, body, filenames, category, when)
+            candidate = _candidate(message, subject, proof_body, filenames, category, when)
             if vendor_index is not None:
                 collected.setdefault((vendor_index, category), []).append(candidate)
             else:
@@ -438,8 +454,9 @@ def _candidate(
 ) -> _EvidenceCandidate:
     message_headers = headers(message)
     relevant = _relevant_filename(category, filenames)
-    text = clean_text(f"{subject} {body} {' '.join(filenames)}")
-    strong = _is_strong_evidence(category, text, _category_attachment_signal(category, filenames))
+    strong = _is_strong_evidence(
+        category, subject, body, _category_attachment_signal(category, filenames),
+    )
     facts = [_fact(category, strong)]
     if relevant:
         facts.append(f"Attachment: {relevant}")
@@ -455,74 +472,174 @@ def _candidate(
     return _EvidenceCandidate(category, evidence, when, strong)
 
 
-def _is_strong_evidence(category: Category, text: str, has_attachment: bool) -> bool:
-    lower = text.lower()
-    solicitation = _matches_any(lower, _SOLICITATION_TERMS)
-    explicit = {
-        Category.CONTRACT_TERMS: _matches_any(
-            lower,
-            (
-                r"\bexecuted\b",
-                r"\bfully\s+executed\b",
-                r"\bsigned\b",
-                r"\bterms\s+of\s+service\b",
-                r"\bterms\s+and\s+conditions\b",
-                r"\brenewal\b",
-                r"\bamendment\b",
-                r"\baddendum\b",
-            ),
+def _is_strong_evidence(
+    category: Category, subject: str, body: str, has_attachment: bool,
+) -> bool:
+    # Only recognizable proof attachments can override request/marketing language.
+    # Filenames themselves are not prose assertions (nor are quote PDF contents).
+    if has_attachment:
+        return True
+    non_proof = _SOLICITATION_TERMS + (
+        r"\b(?:can|could|would|will)\s+you\s+(?:please\s+)?(?:send|provide|supply|issue|submit|forward|attach|upload)\b",
+        r"\bplease\s+(?:provide|send|supply|issue|submit|forward|attach|upload)\b",
+        r"\b(?:please|kindly)\s+(?:confirm|verify|advise)\b",
+        r"\b(?:provide|send|supply|issue|submit|forward|attach|upload)\b",
+        r"\b(?:need(?:ed)?|require(?:d)?|awaiting|pending|missing|without|never)\b",
+        # A coverage limitation is not a denial that coverage was supplied.
+        r"\bnot\b(?!\s+including\s+prior\s+acts\b)",
+        r"\bno\s+(?:\w+\s+){0,3}(?:certificate|insurance|policy|coverage|COI|agreement|contract|maintenance|service|plan|schedule|document|proof|evidence)\b",
+        r"\b(?:haven['’]t|hasn['’]t|isn['’]t|wasn['’]t|don['’]t|doesn['’]t|didn['’]t|cannot|can['’]t)\b",
+        r"\b(?:quotes?|quotations?|proposals?|brochures?|drafts?|templates?|unsigned)\b",
+        r"\b(?:if|unless|whether|assuming|suppose|supposing|provided\s+that|in\s+case|in\s+the\s+event|on\s+condition|as\s+long\s+as)\b",
+        r"^\s*(?:is|are|was|were|has|have|can|could|would|will|should|may|might|do|does|did|what|when|where|why|how|which|who)\b",
+    )
+    supply = (
+        r"\b(?:attached|enclosed)\s+(?:is|are)\b",
+        r"\b(?:we|i)\s+(?:have\s+)?(?:issued|supplied|provided|attached|enclosed|signed|executed)\b",
+        r"\b(?:is|are|was|were|has\s+been|have\s+been)\s+(?:fully\s+)?(?:issued|supplied|provided|attached|enclosed|signed|executed)\b",
+    )
+
+    def asserted_clauses(value: str) -> list[str]:
+        clauses = []
+        # A visual break alone is not a sentence boundary. Only separate a
+        # recognizable follow-up request or marketing disclaimer; otherwise
+        # join wrapped text so its conditional/interrogative scope survives.
+        value = re.sub(
+            r"\n+\s*(?=(?:(?:please|kindly)\s+(?:call|reply|reach\s+out|confirm)\b"
+            r"|(?:can|could|would|will)\s+you\b"
+            r"|(?:(?:please|kindly)\s+)?(?:send|provide|supply|issue|submit|forward|attach|upload)\b"
+            r"|(?:we|i)\s+(?:do\s+not|don['’]t)\s+offer\b))",
+            ";", clean_text(value, preserve_lines=True), flags=re.I,
+        )
+        # Split independent forwarding requests, not arbitrary commas (which
+        # could detach a supply fragment from its conditional antecedent).
+        value = re.sub(
+            r",\s*(?=(?:can|could|would|will)\s+you\b|(?:(?:please|kindly)\s+)?(?:send|provide|supply|issue|submit|forward|attach|upload)\b)",
+            ";", clean_text(value), flags=re.I,
+        )
+        # Keep Policy No. intact and retain question delimiters so even an
+        # interrogative phrased as "The certificate is enclosed?" is no proof.
+        parts = re.split(r"([!?;]+|(?<!\bno)\.(?=\s|$))", value, flags=re.I)
+        for index in range(0, len(parts), 2):
+            if index + 1 < len(parts) and "?" in parts[index + 1]:
+                continue
+            clause = clean_text(parts[index]).lower()
+            # This narrow affirmative framing exception never strips a request
+            # or a denial from the document statement itself.
+            if _matches_any(clause, supply):
+                clause = re.sub(r"^(?:as\s+(?:requested|required)|(?:as\s+)?per\s+(?:your|our)\s+request)\s*,?\s*", "", clause)
+                clause = re.sub(r"\b(?:you\s+requested|(?:the|your|our)\s+requested)\b", "the", clause)
+            if clause and not _matches_any(clause, non_proof):
+                clauses.append(clause)
+        return clauses
+
+    subject_clauses = asserted_clauses(subject)
+    body_clauses = asserted_clauses(body)
+    patterns = {
+        Category.CONTRACT_TERMS: (
+            r"\bexecuted\b", r"\bfully\s+executed\b", r"\bsigned\b",
+            r"\bterms\s+of\s+service\b", r"\bterms\s+and\s+conditions\b",
+            r"\brenewal\b", r"\bamendment\b", r"\baddendum\b",
         ),
-        Category.INSURANCE: has_attachment
-        or _matches_any(
-            lower,
-            (
-                r"\bcertificate\s+of\s+insurance\b",
-                r"\binsurance\s+certificate\b",
-                r"\badditional\s+insured\b",
-                r"\bpolicy\s+(?:number|no\.?|period|term|limits?)\b",
-                r"\bdeclarations\s+page\b",
-                r"\bcoverage\s+(?:limit|limits|period|effective|expires?)\b",
-            ),
+        Category.INSURANCE: (
+            r"\bcertificate\s+of\s+insurance\b", r"\binsurance\s+certificate\b",
+            r"\badditional\s+insured\b", r"\bpolicy\s+(?:number|no\.?|period|term|limits?)\b",
+            r"\bdeclarations\s+page\b", r"\bcoverage\s+(?:limit|limits|period|effective|expires?)\b",
         ),
-        Category.MAINTENANCE: has_attachment
-        or _matches_any(
-            lower,
-            (
-                r"\bexecuted\b",
-                r"\bfully\s+executed\b",
-                r"\bsigned\b",
-                r"\bactive\s+(?:service|maintenance)\b",
-                r"\brecurring\s+(?:service|maintenance)\b",
-                r"\bpreventive\s+maintenance\s+(?:plan|agreement|schedule)\b",
-                r"\bservice\s+(?:plan|agreement|contract)\b",
-            ),
+        Category.MAINTENANCE: (
+            r"\bexecuted\b", r"\bfully\s+executed\b", r"\bsigned\b",
+            r"\bactive\s+(?:service|maintenance)\b", r"\brecurring\s+(?:service|maintenance)\b",
+            r"\bpreventive\s+maintenance\s+(?:plan|agreement|schedule)\b",
+            r"\bservice\s+(?:plan|agreement|contract)\b",
         ),
     }[category]
-    proof_language = _matches_any(
-        lower,
-        (
-            r"\bexecuted\b",
-            r"\bsigned\b",
-            r"\bissued\b",
-            r"\bcertificate\s+of\s+insurance\b",
-            r"\binsurance\s+certificate\b",
-            r"\badditional\s+insured\b",
-            r"\bpolicy\s+(?:number|no\.?|period|term|limits?)\b",
-            r"\bdeclarations\s+page\b",
-        ),
-    )
-    if solicitation and not proof_language:
+    if not _matches_any(" ".join(subject_clauses + body_clauses), patterns):
         return False
-    return bool(explicit)
+    # Apply the same category-specific body requirement to clean messages and
+    # messages containing requests/disclaimers. A subject title plus an unrelated
+    # enclosure (e.g. an invoice) cannot establish proof in this category.
+    # Explicit subject/object grammar, not context + an unrelated predicate.
+    # Anchor noun phrases to a statement boundary so "invoice for the policy
+    # is attached" cannot lend its predicate to "policy". Visual wraps stay
+    # inside the noun/predicate, preserving conditional scope above.
+    document = {
+        Category.CONTRACT_TERMS: r"(?:(?:fully\s+)?(?:signed|executed)\s+)?(?:(?:commercial|vendor|(?:master\s+)?service|commercial\s+electricity\s+supply)\s+)?(?:(?:contract|agreement|renewal|amendment|addendum)s?|terms\s+(?:of\s+service|and\s+conditions))",
+        Category.INSURANCE: r"(?:certificate(?:\s+of\s+insurance)?|insurance\s+certificate|coi|(?:insurance\s+)?policy|declarations\s+page)",
+        Category.MAINTENANCE: r"(?:(?:fully\s+)?(?:signed|executed)\s+)?(?:preventive\s+)?(?:maintenance|service)\s+(?:plan|agreement|contract|schedule)s?",
+    }[category]
+    noun = rf"(?:(?:the|a|an|our|your)\s+)?{document}\b"
+    boundary = r"(?:^|,?\s+and\s+)"
+    bound_supply = (
+        rf"{boundary}{noun}\s+(?:is|are|was|were|has\s+been|have\s+been)\s+(?:fully\s+)?(?:issued|supplied|provided|attached|enclosed|signed|executed)\b",
+        rf"{boundary}(?:attached|enclosed)\s+(?:is|are)\s+{noun}",
+        rf"{boundary}(?:we|i)\s+(?:have\s+)?(?:issued|supplied|provided|attached|enclosed|signed|executed)\s+{noun}",
+    )
+    existing_document = (
+        # A standalone completed-document heading is an explicit assertion;
+        # embedding the same words in an acquisition plan is not.
+        rf"^{noun}(?:$|\s+terms?\b)",
+        rf"^{noun}\s+(?:covers|governs|includes|provides|is\s+(?:effective|in\s+force))\b",
+        rf"^(?:we|i)\s+(?:have(?:\s+(?:received|obtained))?|received|obtained|hold)\s+{noun}",
+    )
+    details = {
+        Category.CONTRACT_TERMS: (
+            r"\b(?:fully\s+)?(?:signed|executed)\s+(?:commercial\s+|(?:master\s+)?service\s+|vendor\s+|commercial\s+electricity\s+supply\s+)?(?:contract|agreement)\b",
+        ),
+        Category.INSURANCE: (
+            r"\bpolicy\s+(?:number|no\.?|period|term|limits?)\s+\S+",
+            r"\bcoverage\s+(?:limits?|period|effective|expires?)\s+\S+",
+            r"\badditional\s+insured\b",
+        ),
+        Category.MAINTENANCE: (
+            r"\b(?:fully\s+)?(?:signed|executed)\s+(?:preventive\s+)?(?:maintenance|service)\s+(?:plan|agreement|contract|schedule)\b",
+        ),
+    }[category]
+    future_service = (
+        r"\b(?:plan(?:s|ned|ning)?|intend(?:s|ed|ing)?|hope(?:s|d)?|expect(?:s|ed|ing)?)\s+(?:to|on)\b",
+        r"\b(?:we|i)\s+(?:plan|intend|hope|expect)\b",
+        r"\b(?:will|would|may|might|could|going\s+to|planning|considering|contemplating)\b",
+        r"\b(?:future|planned|proposed|upcoming)\b",
+        r"\bnext\s+(?:week|month|year|quarter|season)\b",
+        r"\b(?:start(?:s|ing)?|begin(?:s|ning)?|commenc(?:e|es|ing))\b",
+    )
+    for clause in body_clauses:
+        # Preserve the classification gate that keeps maintenance agreements
+        # out of generic contract findings unless explicit contract terms exist.
+        if (
+            category == Category.CONTRACT_TERMS
+            and _matches_any(clause, _MAINTENANCE_TERMS)
+            and category not in classify_document("", clause, ())
+        ):
+            continue
+        if _matches_any(clause, bound_supply):
+            return True
+        if _matches_any(clause, details) and (
+            category == Category.INSURANCE
+            or _matches_any(clause, existing_document)
+        ):
+            return True
+        # Established service is a detail signal; planning/future language is
+        # not. This check never vetoes an affirmative supplied/signed document
+        # that happens to schedule maintenance for a future date.
+        if (
+            category == Category.MAINTENANCE
+            and _matches_any(clause, (r"\b(?:active|recurring)\s+(?:service|maintenance)\b",))
+            and not _matches_any(clause, future_service)
+        ):
+            return True
+    return False
+
+
+def _non_proof_filename(filename: str) -> bool:
+    return bool(re.search(
+        r"\b(?:quotes?|quotations?|proposals?|request(?:s|ed|ing)?|brochures?|flyers?|marketing|offers?|samples?|templates?|drafts?|unsigned|unexecuted|unissued|missing|pending|awaiting)\b"
+        r"|\b(?:not|never)\s+(?:signed|executed|issued)\b",
+        re.sub(r"[_-]+", " ", filename), re.I,
+    ))
 
 
 def _category_attachment_signal(category: Category, filenames: list[str]) -> bool:
-    terms = {
-        Category.CONTRACT_TERMS: ("contract", "agreement", "terms", "renewal", "amend", "addendum"),
-        Category.INSURANCE: ("insurance", "coi", "policy", "certificate", "declaration"),
-        Category.MAINTENANCE: ("maintenance", "service", "hvac", "filter", "repair", "grease", "pest", "hood"),
-    }[category]
-    return any(any(term in str(filename).lower() for term in terms) for filename in filenames)
+    return _relevant_filename(category, filenames) is not None
 
 
 def _fact(category: Category, strong: bool) -> str:
@@ -640,16 +757,25 @@ def _message_datetime(message: dict[str, Any]) -> datetime | None:
 
 
 def _relevant_filename(category: Category, filenames: list[str]) -> str | None:
-    terms = {
-        Category.CONTRACT_TERMS: ("contract", "agreement", "terms", "renewal", "amend", "addendum"),
-        Category.INSURANCE: ("insurance", "coi", "policy", "certificate", "declaration"),
-        Category.MAINTENANCE: ("maintenance", "service", "hvac", "filter", "repair", "grease", "pest", "hood"),
+    # Use the same proof-only filename policy for classification and presentation.
+    # Generic insurance/service marketing files are not recognizable documents.
+    patterns = {
+        Category.CONTRACT_TERMS: (r"\b(?:contract|agreement|terms|renewal|amend(?:ment)?|addendum)\b",),
+        Category.INSURANCE: (
+            r"\b(?:COI|policy|certificate|declarations?)\b",
+            r"\bproof\s+of\s+(?:insurance|coverage)\b",
+        ),
+        Category.MAINTENANCE: (r"\bmaintenance\b", r"\bservice\s+(?:plan|agreement|contract|schedule)\b"),
     }[category]
     for filename in filenames:
-        lower = filename.lower()
-        if any(term in lower for term in terms):
-            return filename
-    return next((filename for filename in filenames if filename.lower().endswith((".pdf", ".doc", ".docx"))), None)
+        name = str(filename)
+        if (
+            name.lower().endswith((".pdf", ".doc", ".docx"))
+            and not _non_proof_filename(name)
+            and _matches_any(re.sub(r"[_-]+", " ", name), patterns)
+        ):
+            return name
+    return None
 
 
 def _dedupe_candidates(candidates: list[_EvidenceCandidate]) -> list[_EvidenceCandidate]:

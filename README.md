@@ -33,7 +33,19 @@ Off-boarded records stay visible but are excluded from the active count.
 
 A missing insurance document is a finding for human follow-up, not permission
 to assume the vendor is uninsured. A solicitation is never treated as an
-agreement or coverage proof.
+agreement or coverage proof. Without a recognizable proof attachment, the body must
+assert supply of the relevant category's document or contain category-specific details;
+a subject title plus an unrelated enclosure remains a lead. Supply uses an explicit
+category-document subject/object grammar: an attached invoice *for* an insurance policy
+is not supply of that policy. Signed/executed details must describe a completed document
+(standalone completed-document heading, possession, or an affirmative document predicate),
+not a plan/intention to obtain one. Planned/future recurring maintenance without supplied,
+signed, or executed-document evidence also remains a lead; genuinely enclosed agreements
+scheduling future service remain evidence.
+Conditional and interrogative scope is retained across wrapped plain text and HTML
+visual breaks. An independent affirmative enclosure in the body remains evidence even
+before a separate request to forward, attach, or upload it; recognizable proof
+attachments remain authoritative.
 
 ## Safety model
 

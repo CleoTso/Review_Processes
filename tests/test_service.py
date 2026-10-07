@@ -1,3 +1,4 @@
+import base64
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -26,7 +27,7 @@ class GmailFake:
             "m1": {
                 "id": "m1",
                 "internalDate": "1787227200000",
-                "payload": {"headers": [
+                "payload": {"mimeType": "text/plain", "body": {"data": base64.urlsafe_b64encode(b"The executed maintenance agreement is enclosed.").decode()}, "headers": [
                     {"name": "Subject", "value": "Executed Maintenance Agreement"},
                     {"name": "From", "value": "vendor@example.com"},
                 ]},
