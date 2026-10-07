@@ -69,5 +69,12 @@ class AirtableClient:
         )
         response.raise_for_status()
         tables = response.json()["tables"]
-        return next(table for table in tables if table["name"] == self.table)
+        # IDs are the default configuration and must win over a colliding label.
+        for key in ("id", "name"):
+            for table in tables:
+                if table.get(key) == self.table:
+                    return table
+        raise RuntimeError(
+            "Configured Airtable vendor table was not found by exact ID or name in base metadata."
+        )
 
